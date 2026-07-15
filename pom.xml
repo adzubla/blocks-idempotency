@@ -33,9 +33,9 @@
     </properties>
 
     <modules>
-        <module>idempotency-core</module>
-        <module>idempotency-store-redis</module>
-        <module>idempotency-store-postgres</module>
+        <module>blocks-idempotency-core</module>
+        <module>blocks-idempotency-store-redis</module>
+        <module>blocks-idempotency-store-postgres</module>
     </modules>
 
     <dependencyManagement>
