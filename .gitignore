@@ -1,0 +1,27 @@
+# Claude Code local settings
+.claude/settings.local.json
+
+# Build output
+target/
+build/
+out/
+bin/
+
+# Java
+*.class
+*.jar
+*.war
+
+# Gradle
+.gradle/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# OS
+.DS_Store
