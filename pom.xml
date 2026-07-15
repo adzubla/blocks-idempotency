@@ -4,9 +4,16 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <!-- Library, not an app: parent on spring-boot-dependencies (the plain BOM)
+         instead of spring-boot-starter-parent (its app-oriented subclass). This
+         still inherits dependencyManagement AND pluginManagement (compiler,
+         surefire, failsafe, jar, etc. versions) via normal parent inheritance,
+         since Maven has no BOM-style import for pluginManagement, without
+         pulling in the starter-parent's resource filtering, spring-boot-maven-plugin
+         binding, or other app-shaped defaults. -->
     <parent>
         <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-parent</artifactId>
+        <artifactId>spring-boot-dependencies</artifactId>
         <version>4.0.7</version>
         <relativePath/>
     </parent>
@@ -20,7 +27,7 @@
     <description>Generic idempotency for Spring Boot REST services</description>
 
     <properties>
-        <java.version>21</java.version>
+        <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <testcontainers.version>1.21.4</testcontainers.version>
     </properties>
@@ -54,20 +61,5 @@
             </dependency>
         </dependencies>
     </dependencyManagement>
-
-    <build>
-        <pluginManagement>
-            <plugins>
-                <!-- Library modules must not be repackaged into executable jars. -->
-                <plugin>
-                    <groupId>org.springframework.boot</groupId>
-                    <artifactId>spring-boot-maven-plugin</artifactId>
-                    <configuration>
-                        <skip>true</skip>
-                    </configuration>
-                </plugin>
-            </plugins>
-        </pluginManagement>
-    </build>
 
 </project>
