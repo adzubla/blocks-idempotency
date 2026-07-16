@@ -7,7 +7,6 @@ import io.adzubla.blocks.idempotency.model.RecordState;
 import io.adzubla.blocks.idempotency.model.ReservationResult;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,7 +56,6 @@ class PostgresNativeConcurrencyTest {
     private static DataSourceTransactionManager transactionManager;
 
     private PostgresIdempotencyStore store;
-    private ExecutorService executor;
 
     @BeforeAll
     static void migrate() {
@@ -79,12 +77,6 @@ class PostgresNativeConcurrencyTest {
     @BeforeEach
     void setUp() {
         store = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, new ObjectMapper(), DEFAULT_LOCK_TIMEOUT);
-        executor = Executors.newFixedThreadPool(2);
-    }
-
-    @AfterEach
-    void tearDown() {
-        executor.shutdownNow();
     }
 
     @Test
@@ -93,30 +85,32 @@ class PostgresNativeConcurrencyTest {
         CountDownLatch primaryReserved = new CountDownLatch(1);
         CountDownLatch releasePrimary = new CountDownLatch(1);
 
-        Future<String> primary = executor.submit(() -> {
-            String fenceToken = store.reserve(key, "fp", TTL).fenceToken().orElseThrow();
-            primaryReserved.countDown();
-            releasePrimary.await(5, TimeUnit.SECONDS);
-            store.complete(key, fenceToken, new CachedResponse(201, Map.of(), "{}".getBytes()), TTL);
-            return fenceToken;
-        });
-        assertThat(primaryReserved.await(5, TimeUnit.SECONDS)).isTrue();
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            Future<String> primary = executor.submit(() -> {
+                String fenceToken = store.reserve(key, "fp", TTL).fenceToken().orElseThrow();
+                primaryReserved.countDown();
+                releasePrimary.await(5, TimeUnit.SECONDS);
+                store.complete(key, fenceToken, new CachedResponse(201, Map.of(), "{}".getBytes()), TTL);
+                return fenceToken;
+            });
+            assertThat(primaryReserved.await(5, TimeUnit.SECONDS)).isTrue();
 
-        Future<ReservationResult> waiter = executor.submit(() -> store.reserve(key, "fp", TTL));
+            Future<ReservationResult> waiter = executor.submit(() -> store.reserve(key, "fp", TTL));
 
-        // The primary is deliberately still holding the reservation open -
-        // if the waiter resolved via anything other than blocking on the
-        // row's lock (e.g. polling find() and giving up), it would have
-        // returned well before this.
-        Thread.sleep(300);
-        assertThat(waiter.isDone()).isFalse();
+            // The primary is deliberately still holding the reservation open -
+            // if the waiter resolved via anything other than blocking on the
+            // row's lock (e.g. polling find() and giving up), it would have
+            // returned well before this.
+            Thread.sleep(300);
+            assertThat(waiter.isDone()).isFalse();
 
-        releasePrimary.countDown();
-        primary.get(5, TimeUnit.SECONDS);
-        ReservationResult result = waiter.get(5, TimeUnit.SECONDS);
+            releasePrimary.countDown();
+            primary.get(5, TimeUnit.SECONDS);
+            ReservationResult result = waiter.get(5, TimeUnit.SECONDS);
 
-        assertThat(result.outcome()).isEqualTo(ReservationResult.Outcome.EXISTS);
-        assertThat(result.existing().orElseThrow().isCompleted()).isTrue();
+            assertThat(result.outcome()).isEqualTo(ReservationResult.Outcome.EXISTS);
+            assertThat(result.existing().orElseThrow().isCompleted()).isTrue();
+        }
     }
 
     @Test
@@ -125,20 +119,22 @@ class PostgresNativeConcurrencyTest {
         CountDownLatch primaryReserved = new CountDownLatch(1);
         CachedResponse response = new CachedResponse(201, Map.of(), "{\"id\":1}".getBytes());
 
-        Future<Void> primary = executor.submit(() -> {
-            String fenceToken = store.reserve(key, "fp", TTL).fenceToken().orElseThrow();
-            primaryReserved.countDown();
-            Thread.sleep(200);
-            store.complete(key, fenceToken, response, TTL);
-            return null;
-        });
-        assertThat(primaryReserved.await(5, TimeUnit.SECONDS)).isTrue();
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            Future<Void> primary = executor.submit(() -> {
+                String fenceToken = store.reserve(key, "fp", TTL).fenceToken().orElseThrow();
+                primaryReserved.countDown();
+                Thread.sleep(200);
+                store.complete(key, fenceToken, response, TTL);
+                return null;
+            });
+            assertThat(primaryReserved.await(5, TimeUnit.SECONDS)).isTrue();
 
-        ReservationResult waiterResult = executor.submit(() -> store.reserve(key, "fp", TTL)).get(5, TimeUnit.SECONDS);
-        primary.get(5, TimeUnit.SECONDS);
+            ReservationResult waiterResult = executor.submit(() -> store.reserve(key, "fp", TTL)).get(5, TimeUnit.SECONDS);
+            primary.get(5, TimeUnit.SECONDS);
 
-        assertThat(waiterResult.outcome()).isEqualTo(ReservationResult.Outcome.EXISTS);
-        assertThat(waiterResult.existing().orElseThrow().response()).isEqualTo(response);
+            assertThat(waiterResult.outcome()).isEqualTo(ReservationResult.Outcome.EXISTS);
+            assertThat(waiterResult.existing().orElseThrow().response()).isEqualTo(response);
+        }
     }
 
     @Test
@@ -146,34 +142,36 @@ class PostgresNativeConcurrencyTest {
         EffectiveKey key = key("rollback-1");
         CountDownLatch primaryReserved = new CountDownLatch(1);
 
-        Future<Void> primary = executor.submit(() -> {
-            String fenceToken = store.reserve(key, "fp", TTL).fenceToken().orElseThrow();
-            primaryReserved.countDown();
-            Thread.sleep(200);
-            store.release(key, fenceToken); // simulated crash/error - rolls back
-            return null;
-        });
-        assertThat(primaryReserved.await(5, TimeUnit.SECONDS)).isTrue();
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            Future<Void> primary = executor.submit(() -> {
+                String fenceToken = store.reserve(key, "fp", TTL).fenceToken().orElseThrow();
+                primaryReserved.countDown();
+                Thread.sleep(200);
+                store.release(key, fenceToken); // simulated crash/error - rolls back
+                return null;
+            });
+            assertThat(primaryReserved.await(5, TimeUnit.SECONDS)).isTrue();
 
-        // The completion, if any, must run on the SAME thread as the reserve()
-        // that won it - PostgresIdempotencyStore's transaction binding is
-        // thread-local (ADR 0003), exactly like a real request thread running
-        // preHandle -> handler -> afterCompletion.
-        Future<ReservationResult> waiter = executor.submit(() -> {
-            ReservationResult result = store.reserve(key, "fp", TTL);
-            if (result.outcome() == ReservationResult.Outcome.RESERVED) {
-                store.complete(key, result.fenceToken().orElseThrow(), new CachedResponse(201, Map.of(), "{}".getBytes()), TTL);
-            }
-            return result;
-        });
+            // The completion, if any, must run on the SAME thread as the reserve()
+            // that won it - PostgresIdempotencyStore's transaction binding is
+            // thread-local (ADR 0003), exactly like a real request thread running
+            // preHandle -> handler -> afterCompletion.
+            Future<ReservationResult> waiter = executor.submit(() -> {
+                ReservationResult result = store.reserve(key, "fp", TTL);
+                if (result.outcome() == ReservationResult.Outcome.RESERVED) {
+                    store.complete(key, result.fenceToken().orElseThrow(), new CachedResponse(201, Map.of(), "{}".getBytes()), TTL);
+                }
+                return result;
+            });
 
-        ReservationResult waiterResult = waiter.get(5, TimeUnit.SECONDS);
-        primary.get(5, TimeUnit.SECONDS);
+            ReservationResult waiterResult = waiter.get(5, TimeUnit.SECONDS);
+            primary.get(5, TimeUnit.SECONDS);
 
-        // Self-promotion: the waiter, not the (rolled-back) primary, ends up
-        // owning and completing the reservation - exactly once.
-        assertThat(waiterResult.outcome()).isEqualTo(ReservationResult.Outcome.RESERVED);
-        assertThat(store.find(key).orElseThrow().isCompleted()).isTrue();
+            // Self-promotion: the waiter, not the (rolled-back) primary, ends up
+            // owning and completing the reservation - exactly once.
+            assertThat(waiterResult.outcome()).isEqualTo(ReservationResult.Outcome.RESERVED);
+            assertThat(store.find(key).orElseThrow().isCompleted()).isTrue();
+        }
     }
 
     @Test
@@ -184,30 +182,32 @@ class PostgresNativeConcurrencyTest {
         CountDownLatch primaryReserved = new CountDownLatch(1);
         CountDownLatch releasePrimary = new CountDownLatch(1);
 
-        Future<Void> primary = executor.submit(() -> {
-            String fenceToken = boundedStore.reserve(key, "fp", TTL).fenceToken().orElseThrow();
-            primaryReserved.countDown();
-            // Deliberately never resolves within the waiter's lock_timeout -
-            // simulates a live but stuck/slow holder, not a crash (a crash
-            // drops the connection, which Postgres rolls back on its own -
-            // the self-promotion test above already covers that path).
-            releasePrimary.await(5, TimeUnit.SECONDS);
-            boundedStore.release(key, fenceToken);
-            return null;
-        });
-        assertThat(primaryReserved.await(5, TimeUnit.SECONDS)).isTrue();
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            Future<Void> primary = executor.submit(() -> {
+                String fenceToken = boundedStore.reserve(key, "fp", TTL).fenceToken().orElseThrow();
+                primaryReserved.countDown();
+                // Deliberately never resolves within the waiter's lock_timeout -
+                // simulates a live but stuck/slow holder, not a crash (a crash
+                // drops the connection, which Postgres rolls back on its own -
+                // the self-promotion test above already covers that path).
+                releasePrimary.await(5, TimeUnit.SECONDS);
+                boundedStore.release(key, fenceToken);
+                return null;
+            });
+            assertThat(primaryReserved.await(5, TimeUnit.SECONDS)).isTrue();
 
-        long start = System.nanoTime();
-        ReservationResult waiterResult = executor.submit(() -> boundedStore.reserve(key, "fp", TTL)).get(5, TimeUnit.SECONDS);
-        Duration elapsed = Duration.ofNanos(System.nanoTime() - start);
+            long start = System.nanoTime();
+            ReservationResult waiterResult = executor.submit(() -> boundedStore.reserve(key, "fp", TTL)).get(5, TimeUnit.SECONDS);
+            Duration elapsed = Duration.ofNanos(System.nanoTime() - start);
 
-        assertThat(waiterResult.outcome()).isEqualTo(ReservationResult.Outcome.EXISTS);
-        assertThat(waiterResult.existing().orElseThrow().state()).isEqualTo(RecordState.IN_PROGRESS);
-        // Bounded by lock_timeout (300ms), nowhere near the primary's 5s hold.
-        assertThat(elapsed).isLessThan(Duration.ofSeconds(2));
+            assertThat(waiterResult.outcome()).isEqualTo(ReservationResult.Outcome.EXISTS);
+            assertThat(waiterResult.existing().orElseThrow().state()).isEqualTo(RecordState.IN_PROGRESS);
+            // Bounded by lock_timeout (300ms), nowhere near the primary's 5s hold.
+            assertThat(elapsed).isLessThan(Duration.ofSeconds(2));
 
-        releasePrimary.countDown();
-        primary.get(5, TimeUnit.SECONDS);
+            releasePrimary.countDown();
+            primary.get(5, TimeUnit.SECONDS);
+        }
     }
 
     private static EffectiveKey key(String value) {

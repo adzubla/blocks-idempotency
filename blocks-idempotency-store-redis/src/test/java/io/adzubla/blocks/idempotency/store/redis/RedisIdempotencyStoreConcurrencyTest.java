@@ -62,8 +62,7 @@ class RedisIdempotencyStoreConcurrencyTest {
         RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, new ObjectMapper(), "idempotency-concurrency-test:");
         EffectiveKey key = new EffectiveKey("POST", "/orders", "", "race-1");
 
-        ExecutorService executor = Executors.newFixedThreadPool(CONCURRENT_CALLERS);
-        try {
+        try (ExecutorService executor = Executors.newFixedThreadPool(CONCURRENT_CALLERS)) {
             List<Callable<ReservationResult>> callers = IntStream.range(0, CONCURRENT_CALLERS)
                     .<Callable<ReservationResult>>mapToObj(i -> () -> store.reserve(key, "fp", TTL))
                     .collect(Collectors.toList());
@@ -82,8 +81,6 @@ class RedisIdempotencyStoreConcurrencyTest {
 
             assertThat(won).isEqualTo(1);
             assertThat(existed).isEqualTo(CONCURRENT_CALLERS - 1);
-        } finally {
-            executor.shutdownNow();
         }
     }
 }

@@ -218,8 +218,7 @@ class PostgresIdempotencyEndToEndTest {
      */
     @Test
     void twoConcurrentRequestsWithTheSameKeyExecuteTheHandlerExactlyOnceWhenThePrimarySucceeds() throws Exception {
-        ExecutorService executor = Executors.newFixedThreadPool(2);
-        try {
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
             Future<MvcResult> first = executor.submit(() -> concurrentOrderRequest("ok").andReturn());
             Thread.sleep(100); // let the first request win the reservation and enter its sleep
             Future<MvcResult> second = executor.submit(() -> concurrentOrderRequest("ok").andReturn());
@@ -233,15 +232,12 @@ class PostgresIdempotencyEndToEndTest {
             long replays = Stream.of(r1, r2).filter(r -> "true".equals(r.getResponse().getHeader("Idempotency-Replayed"))).count();
             assertThat(replays).isEqualTo(1);
             assertThat(jdbc.queryForObject("SELECT count(*) FROM test_orders", Integer.class)).isEqualTo(1);
-        } finally {
-            executor.shutdownNow();
         }
     }
 
     @Test
     void whenThePrimaryThrowsTheBlockedConcurrentRequestSelfPromotesAndExecutesTheEffectExactlyOnce() throws Exception {
-        ExecutorService executor = Executors.newFixedThreadPool(2);
-        try {
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
             Future<MvcResult> primary = executor.submit(() -> concurrentOrderRequest("throw").andReturn());
             Thread.sleep(100); // let the primary win the reservation and enter its sleep
             Future<MvcResult> waiter = executor.submit(() -> concurrentOrderRequest("ok").andReturn());
@@ -256,8 +252,6 @@ class PostgresIdempotencyEndToEndTest {
             assertThat(waiterResult.getResponse().getStatus()).isEqualTo(201);
             assertThat(waiterResult.getResponse().getHeader("Idempotency-Replayed")).isNull();
             assertThat(jdbc.queryForObject("SELECT count(*) FROM test_orders", Integer.class)).isEqualTo(1);
-        } finally {
-            executor.shutdownNow();
         }
     }
 
