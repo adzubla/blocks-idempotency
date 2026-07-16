@@ -341,7 +341,7 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
             return Map.of();
         }
         try {
-            return headerMapper.readValue(json, new TypeReference<Map<String, List<String>>>() {
+            return headerMapper.readValue(json, new TypeReference<>() {
             });
         } catch (JacksonException e) {
             throw new IllegalStateException("failed to parse response headers", e);
