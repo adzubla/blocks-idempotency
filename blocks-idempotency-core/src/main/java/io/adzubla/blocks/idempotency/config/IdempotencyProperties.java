@@ -33,6 +33,17 @@ public class IdempotencyProperties {
     /** How long a WAIT waiter blocks before giving up. */
     private Duration waitTimeout = Duration.ofSeconds(5);
 
+    /**
+     * Base delay between WAIT-mode polls, for stores without a native
+     * blocking wait (ADR 0002: "~100ms"). Ignored by a store (e.g. Postgres)
+     * that overrides {@link io.adzubla.blocks.idempotency.store.IdempotencyStore#await}
+     * with its own mechanism.
+     */
+    private Duration pollInterval = Duration.ofMillis(100);
+
+    /** Extra random delay added to each poll, up to this much (ADR 0002: "with jitter"). */
+    private Duration pollJitter = Duration.ofMillis(50);
+
     private final Key key = new Key();
     private final Scope scope = new Scope();
     private final Replay replay = new Replay();
@@ -99,6 +110,10 @@ public class IdempotencyProperties {
     public void setLockTtl(Duration lockTtl) { this.lockTtl = lockTtl; }
     public Duration getWaitTimeout() { return waitTimeout; }
     public void setWaitTimeout(Duration waitTimeout) { this.waitTimeout = waitTimeout; }
+    public Duration getPollInterval() { return pollInterval; }
+    public void setPollInterval(Duration pollInterval) { this.pollInterval = pollInterval; }
+    public Duration getPollJitter() { return pollJitter; }
+    public void setPollJitter(Duration pollJitter) { this.pollJitter = pollJitter; }
     public DataSize getMaxBodySize() { return maxBodySize; }
     public void setMaxBodySize(DataSize maxBodySize) { this.maxBodySize = maxBodySize; }
     public Key getKey() { return key; }

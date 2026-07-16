@@ -12,9 +12,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -329,25 +327,6 @@ class IdempotencyEngineTest {
         EngineDecision decision = waitEngine.before(key, "fp", lockTtl, OnStoreFailure.CLOSED, WhenInProgress.WAIT, Duration.ofMillis(300));
 
         assertThat(decision).isInstanceOf(EngineDecision.FailClosed.class);
-    }
-
-    @Test
-    void pollDelayVariesWithinTheConfiguredJitterRange() {
-        Duration pollInterval = Duration.ofMillis(10);
-        Duration pollJitter = Duration.ofMillis(20);
-        IdempotencyEngine jitteredEngine = new IdempotencyEngine(store, pollInterval, pollJitter);
-
-        Set<Long> observedDelaysMillis = new HashSet<>();
-        for (int i = 0; i < 20; i++) {
-            long start = System.nanoTime();
-            jitteredEngine.sleepWithJitter();
-            long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
-            observedDelaysMillis.add(elapsedMillis);
-            assertThat(elapsedMillis).isGreaterThanOrEqualTo(pollInterval.toMillis());
-        }
-
-        // Real jitter means 20 samples shouldn't all collapse to one delay.
-        assertThat(observedDelaysMillis).hasSizeGreaterThan(1);
     }
 
     @Test

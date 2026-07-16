@@ -3,6 +3,7 @@ package io.adzubla.blocks.idempotency.engine;
 import io.adzubla.blocks.idempotency.metrics.IdempotencyMetrics;
 import io.adzubla.blocks.idempotency.store.IdempotencyStore;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -20,9 +21,10 @@ public class IdempotencyEngineRegistry {
 
     private final Map<String, IdempotencyEngine> enginesByQualifier;
 
-    public IdempotencyEngineRegistry(Map<String, IdempotencyStore> storesByQualifier, IdempotencyMetrics metrics) {
+    public IdempotencyEngineRegistry(Map<String, IdempotencyStore> storesByQualifier, Duration pollInterval, Duration pollJitter,
+            IdempotencyMetrics metrics) {
         Map<String, IdempotencyEngine> engines = new LinkedHashMap<>();
-        storesByQualifier.forEach((qualifier, store) -> engines.put(qualifier, new IdempotencyEngine(store, metrics)));
+        storesByQualifier.forEach((qualifier, store) -> engines.put(qualifier, new IdempotencyEngine(store, pollInterval, pollJitter, metrics)));
         this.enginesByQualifier = Map.copyOf(engines);
     }
 

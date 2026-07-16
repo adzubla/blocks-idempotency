@@ -6,6 +6,7 @@ import io.adzubla.blocks.idempotency.model.IdempotencyRecord;
 import io.adzubla.blocks.idempotency.model.ReservationResult;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Optional;
 
 /**
@@ -42,11 +43,31 @@ public interface IdempotencyStore {
     void release(EffectiveKey key, String fenceToken);
 
     /**
-     * Wait for an in-progress key to reach a terminal state (ADR 0002 WAIT mode).
-     * The default is the core polling model; stores with native blocking (Postgres)
-     * may override with their own mechanism.
+     * Wait for an in-progress key to reach a terminal state (ADR 0002 WAIT mode):
+     * returns the record once it's completed, {@link Optional#empty()} if it
+     * disappears (released, or its lock expired), or the still-in-progress
+     * record if {@code waitTimeout} elapses first - the caller tells "timed
+     * out" from "released" apart by whether the {@link Optional} is present.
+     *
+     * <p>The default polls via {@link #find} at {@code pollInterval} (plus up
+     * to {@code pollJitter}) - the core model from ADR 0002. Stores with a
+     * native blocking primitive (Postgres's row lock) may override with their
+     * own mechanism instead, ignoring {@code pollInterval}/{@code pollJitter}.
      */
-    default Optional<IdempotencyRecord> await(EffectiveKey key, Duration waitTimeout, Duration pollInterval) {
-        throw new UnsupportedOperationException("await() not yet implemented");
+    default Optional<IdempotencyRecord> await(EffectiveKey key, Duration waitTimeout, Duration pollInterval, Duration pollJitter) {
+        Instant deadline = Instant.now().plus(waitTimeout);
+        while (true) {
+            Duration remaining = Duration.between(Instant.now(), deadline);
+            if (remaining.isZero() || remaining.isNegative()) {
+                return find(key);
+            }
+            PollJitter.sleep(pollInterval, pollJitter, remaining);
+
+            Optional<IdempotencyRecord> current = find(key);
+            if (current.isEmpty() || current.get().isCompleted()) {
+                return current;
+            }
+            // Still in-progress - loop back, remaining budget re-checked above.
+        }
     }
 }

@@ -115,6 +115,11 @@ idempotency.default-when-in-progress=REJECT
 idempotency.lock-ttl=30s
 # how long a WAIT caller blocks for the primary's result before giving up
 idempotency.wait-timeout=5s
+# base delay between WAIT-mode polls, for stores without a native blocking
+# wait (Postgres has one and ignores both of these)
+idempotency.poll-interval=100ms
+# extra random delay added to each poll, up to this much
+idempotency.poll-jitter=50ms
 # responses over this size aren't cached; a replay then gets 409 response_unavailable
 idempotency.max-body-size=1MB
 # max length of the raw key value (header or body-field); longer values are
@@ -209,7 +214,10 @@ joins transparently via ordinary `@Transactional`/plain JDBC on the same
 thread); `complete()` commits response + effect together; `release()` rolls back
 both. Concurrency is native — a second reservation blocks on the row's
 `UNIQUE`/primary-key conflict until the first commits or rolls back, bounded by
-`lock_timeout`.
+`lock_timeout`. `whenInProgress = WAIT` uses this same native block instead of
+polling, so `idempotency.poll-interval`/`idempotency.poll-jitter` don't apply
+here — a waiter resolves the instant the primary commits or rolls back, not on
+the next poll tick.
 
 Requires `spring-boot-starter-jdbc`, a `DataSource`/`PlatformTransactionManager`,
 and the `idempotency_record` table. A Flyway migration

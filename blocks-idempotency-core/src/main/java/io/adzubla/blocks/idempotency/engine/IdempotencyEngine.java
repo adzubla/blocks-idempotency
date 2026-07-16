@@ -14,9 +14,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Optional;
-import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * Orchestrates the idempotency flow over an {@link IdempotencyStore}:
@@ -94,39 +92,28 @@ public class IdempotencyEngine {
     }
 
     /**
-     * Polls the key (base {@link #pollInterval} + up to {@link #pollJitter},
-     * ADR 0002's polling model) until it completes, disappears, or {@code
-     * waitTimeout} elapses. Each sleep is capped to the remaining budget, so
-     * the wait never overshoots {@code waitTimeout}. Thread-holding by design
-     * (ADR 0002) - the waiter never executes the effect itself (no
-     * self-promotion).
+     * Delegates to {@link IdempotencyStore#await} (ADR 0002's WAIT mode) and
+     * translates its outcome. Thread-holding by design (ADR 0002) - the
+     * waiter never executes the effect itself (no self-promotion).
      */
     private EngineDecision waitForCompletion(EffectiveKey key, Duration lockTtl, Duration waitTimeout, OnStoreFailure onStoreFailure) {
-        Instant deadline = Instant.now().plus(waitTimeout);
-        while (true) {
-            Duration remaining = Duration.between(Instant.now(), deadline);
-            if (remaining.isZero() || remaining.isNegative()) {
-                return reject(key, RejectReason.TIMEOUT, lockTtl);
-            }
-            sleepWithJitter(remaining);
-
-            Optional<IdempotencyRecord> current;
-            try {
-                current = store.find(key);
-            } catch (StoreUnavailableException e) {
-                return applyStoreFailurePosture(key, onStoreFailure, e);
-            }
-            if (current.isEmpty()) {
-                // The primary failed (error releases the key) or its lock
-                // expired (crash) - either way, the key is gone.
-                return reject(key, RejectReason.RELEASED, lockTtl);
-            }
-            IdempotencyRecord record = current.get();
-            if (record.isCompleted()) {
-                return decisionForCompleted(key, record.response());
-            }
-            // Still in-progress - loop back, remaining budget re-checked above.
+        Optional<IdempotencyRecord> result;
+        try {
+            result = store.await(key, waitTimeout, pollInterval, pollJitter);
+        } catch (StoreUnavailableException e) {
+            return applyStoreFailurePosture(key, onStoreFailure, e);
         }
+        if (result.isEmpty()) {
+            // The primary failed (error releases the key) or its lock
+            // expired (crash) - either way, the key is gone.
+            return reject(key, RejectReason.RELEASED, lockTtl);
+        }
+        IdempotencyRecord record = result.get();
+        if (record.isCompleted()) {
+            return decisionForCompleted(key, record.response());
+        }
+        // Still in-progress once waitTimeout ran out - give up.
+        return reject(key, RejectReason.TIMEOUT, lockTtl);
     }
 
     private EngineDecision decisionForCompleted(EffectiveKey key, CachedResponse response) {
@@ -159,23 +146,6 @@ public class IdempotencyEngine {
         log.warn("Idempotency store unavailable for {} {} - failing open (unprotected)", key.method(), key.path(), cause);
         metrics.recordFailOpen();
         return new EngineDecision.ProceedUnprotected();
-    }
-
-    /** Package-private so tests can verify jitter directly without a full WAIT loop. */
-    void sleepWithJitter() {
-        sleepWithJitter(pollInterval.plus(pollJitter).plusMillis(1));
-    }
-
-    /** As {@link #sleepWithJitter()}, but never sleeps past {@code cap} - keeps the WAIT loop within {@code waitTimeout}. */
-    private void sleepWithJitter(Duration cap) {
-        long jitterMillis = pollJitter.toMillis() > 0 ? ThreadLocalRandom.current().nextLong(pollJitter.toMillis() + 1) : 0;
-        long delayMillis = Math.min(pollInterval.toMillis() + jitterMillis, cap.toMillis());
-        try {
-            Thread.sleep(delayMillis);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IllegalStateException("interrupted while waiting for the idempotency key to complete", e);
-        }
     }
 
     public void complete(EffectiveKey key, String fenceToken, CachedResponse response, Duration responseTtl) {

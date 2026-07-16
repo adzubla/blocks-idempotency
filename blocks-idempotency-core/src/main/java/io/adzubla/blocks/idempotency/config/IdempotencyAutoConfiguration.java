@@ -89,8 +89,10 @@ public class IdempotencyAutoConfiguration {
         }
 
         @Bean
-        public IdempotencyEngineRegistry idempotencyEngineRegistry(ConfigurableListableBeanFactory beanFactory, IdempotencyMetrics metrics) {
-            return new IdempotencyEngineRegistry(IdempotencyStoreQualifiers.byQualifier(beanFactory), metrics);
+        public IdempotencyEngineRegistry idempotencyEngineRegistry(ConfigurableListableBeanFactory beanFactory, IdempotencyProperties properties,
+                IdempotencyMetrics metrics) {
+            return new IdempotencyEngineRegistry(IdempotencyStoreQualifiers.byQualifier(beanFactory), properties.getPollInterval(),
+                    properties.getPollJitter(), metrics);
         }
 
         @Bean

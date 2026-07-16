@@ -24,8 +24,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * (Slice 008 - {@code complete}/{@code release} no-op if the caller's token
  * no longer matches the current reservation, so a primary whose lock already
  * expired and was superseded can't clobber the new primary's record), no
- * native wait support (Slice 009 - {@link #await} throws by default, unused
- * in Slice 001). {@link #setUnavailable} simulates an outage (Slice 007 -
+ * native wait support (Slice 009 - inherits {@link IdempotencyStore}'s
+ * default {@code await()}, which polls {@link #find}). {@link #setUnavailable}
+ * simulates an outage (Slice 007 -
  * every operation throws {@link StoreUnavailableException}) for exercising
  * the {@code onStoreFailure} posture.
  */

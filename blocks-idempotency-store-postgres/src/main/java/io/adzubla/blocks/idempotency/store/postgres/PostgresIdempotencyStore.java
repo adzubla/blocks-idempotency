@@ -24,6 +24,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -61,6 +62,15 @@ import java.util.UUID;
  * time. A lock-timeout error is fenced through as an ordinary {@code
  * IN_PROGRESS} record carrying the caller's own fingerprint, so the engine's
  * existing {@code RejectReason.IN_PROGRESS}/WAIT handling applies unchanged.
+ *
+ * <p>{@code await()} (ADR 0002 WAIT mode) overrides {@link IdempotencyStore}'s
+ * polling default with the same native primitive {@code reserve()} uses -
+ * conflict detection on {@code INSERT ... ON CONFLICT} blocks on the row and
+ * unblocks the instant the primary resolves, rather than polling {@code
+ * find()} on an interval. A bare {@code SELECT ... FOR UPDATE} can't do this:
+ * an in-flight, uncommitted {@code INSERT} is invisible to every other
+ * transaction under MVCC, so it would see nothing and return instantly
+ * rather than wait.
  *
  * <p>Not yet supported: async request handling - {@code Callable}/{@code
  * DeferredResult}/WebFlux-style handlers can hop threads between {@code
@@ -100,6 +110,25 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
             UPDATE idempotency_record
             SET response_status = ?, response_headers = ?::jsonb, response_body = ?, expires_at = clock_timestamp() + ?::interval
             WHERE http_method = ? AND path = ? AND principal = ? AND idempotency_key = ? AND reservation_token = ?
+            """;
+
+    /**
+     * Used only by {@link #await} to block on a row without becoming its
+     * owner: a plain {@code SELECT ... FOR UPDATE} can't do this - an
+     * in-flight, uncommitted {@code INSERT} is invisible to every other
+     * transaction under MVCC, so a bare {@code SELECT} would see nothing and
+     * return instantly rather than wait. Conflict detection on {@code INSERT
+     * ... ON CONFLICT} is what actually blocks (the same primitive {@link
+     * #UPSERT_RESERVATION} uses). {@code DO NOTHING} rather than {@code DO
+     * UPDATE}: {@code await()} rolls back immediately if this "wins" (see
+     * below), so what the conflict branch would have done never matters.
+     */
+    private static final String TRY_LOCK = """
+            INSERT INTO idempotency_record
+                (http_method, path, principal, idempotency_key, fingerprint, reservation_token, created_at, expires_at)
+            VALUES (?, ?, ?, ?, '__await__', '__await__', clock_timestamp(), clock_timestamp())
+            ON CONFLICT (http_method, path, principal, idempotency_key) DO NOTHING
+            RETURNING http_method
             """;
 
     /** SQLState 55P03 ("lock_not_available") - raised when {@code lock_timeout} is exceeded. */
@@ -185,6 +214,60 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
             return findRecord(key);
         } catch (RuntimeException e) {
             throw asStoreUnavailableIfConnectionFailure(e);
+        }
+    }
+
+    /**
+     * Overrides the polling default with a real blocking wait (ADR 0001/0002):
+     * {@link #TRY_LOCK} blocks on the same conflict the primary's open
+     * transaction holds, and unblocks the instant it commits or rolls back -
+     * not on the next {@code pollInterval} tick. {@code pollInterval}/{@code
+     * pollJitter} are unused here; native blocking replaces the poll cadence
+     * entirely.
+     *
+     * <p>Deliberately never keeps ownership, matching {@code
+     * IdempotencyEngine}'s WAIT-mode contract (no self-promotion): if {@code
+     * TRY_LOCK} "wins" - the row was gone because the primary rolled back -
+     * that win is immediately rolled back too, and this reports {@code
+     * Optional.empty()} rather than racing to claim it.
+     */
+    @Override
+    public Optional<IdempotencyRecord> await(EffectiveKey key, Duration waitTimeout, Duration pollInterval, Duration pollJitter) {
+        Instant deadline = Instant.now().plus(waitTimeout);
+        while (true) {
+            Duration remaining = Duration.between(Instant.now(), deadline);
+            if (remaining.isZero() || remaining.isNegative()) {
+                return findRecord(key);
+            }
+            TransactionStatus status;
+            try {
+                status = transactionManager.getTransaction(new DefaultTransactionDefinition());
+            } catch (RuntimeException e) {
+                throw asStoreUnavailableIfConnectionFailure(e);
+            }
+            try {
+                jdbc.execute("SET LOCAL lock_timeout = '" + remaining.toMillis() + "ms'");
+                boolean wouldHaveWon = !jdbc.query(TRY_LOCK, (rs, rowNum) -> rs.getString(1), keyArgs(key)).isEmpty();
+                if (wouldHaveWon) {
+                    // The row was gone (primary released/crashed) - discard
+                    // our own accidental claim rather than keep it.
+                    transactionManager.rollback(status);
+                    return Optional.empty();
+                }
+                Optional<IdempotencyRecord> current = findRecord(key);
+                transactionManager.commit(status);
+                if (current.isEmpty() || current.get().isCompleted()) {
+                    return current;
+                }
+                // Unblocked but still in-progress (a new primary claimed the
+                // row the instant ours let go) - loop and wait on it too.
+            } catch (RuntimeException e) {
+                safeRollback(status);
+                if (isLockTimeout(e)) {
+                    return findRecord(key); // waitTimeout exhausted while blocked
+                }
+                throw asStoreUnavailableIfConnectionFailure(e);
+            }
         }
     }
 
