@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.QueryTimeoutException;
+import org.springframework.data.redis.RedisSystemException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import tools.jackson.core.JacksonException;
@@ -152,11 +153,22 @@ public class RedisIdempotencyStore implements IdempotencyStore {
         guarded(() -> redis.execute(RELEASE_SCRIPT, List.of(redisKey(key)), fenceToken));
     }
 
-    /** Translates a genuine Redis connection/timeout failure into {@link StoreUnavailableException} (Slice 015). */
+    /**
+     * Translates a genuine Redis connection/timeout failure into {@link StoreUnavailableException}
+     * (Slice 015). {@code RedisSystemException} is a separate branch from {@code
+     * DataAccessResourceFailureException} (its subtype {@code RedisConnectionFailureException} covers
+     * a clean connection-refused/timeout), not a supertype of it - Spring Data Redis falls back to the
+     * generic {@code RedisSystemException} whenever {@code LettuceExceptionConverter} can't classify the
+     * underlying Lettuce exception more specifically (e.g. a mid-command {@code SocketException:
+     * Connection reset}, as opposed to a clean timeout or connection-refused). Without catching it too,
+     * that shape of failure - which real Redis outages genuinely produce, not just a clean timeout -
+     * leaks past this method as a raw 500 instead of going through the configured {@code
+     * onStoreFailure} posture.
+     */
     private <T> T guarded(Supplier<T> redisOperation) {
         try {
             return redisOperation.get();
-        } catch (DataAccessResourceFailureException | QueryTimeoutException e) {
+        } catch (DataAccessResourceFailureException | QueryTimeoutException | RedisSystemException e) {
             log.warn("Redis idempotency store unavailable", e);
             throw new StoreUnavailableException("Redis is unavailable", e);
         }
