@@ -264,7 +264,17 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
             } catch (RuntimeException e) {
                 safeRollback(status);
                 if (isLockTimeout(e)) {
-                    return findRecord(key); // waitTimeout exhausted while blocked
+                    // waitTimeout exhausted while genuinely still blocked - the
+                    // primary's reservation is still open and uncommitted, so
+                    // (like reserve()'s own lock-timeout branch above) a plain
+                    // SELECT can't see it: an in-flight INSERT is invisible to
+                    // every other transaction under MVCC, so findRecord(key)
+                    // here would wrongly report empty ("released") instead of
+                    // still-in-progress ("timeout"). No fingerprint is
+                    // available to carry (unlike reserve()'s caller-supplied
+                    // one) - none is needed here, since the engine's WAIT-mode
+                    // timeout branch only inspects IdempotencyRecord#isCompleted.
+                    return Optional.of(new IdempotencyRecord(RecordState.IN_PROGRESS, null, null));
                 }
                 throw asStoreUnavailableIfConnectionFailure(e);
             }

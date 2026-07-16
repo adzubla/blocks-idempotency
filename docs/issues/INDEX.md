@@ -51,6 +51,7 @@ not the interceptor.
 | [016](016-postgres-transaction-participation-decision.md) | HITL: how does the Postgres reservation join the effect's own transaction? | HITL | — |
 | [017](017-postgres-store-reserve-complete-release.md) | Postgres store: reserve/complete/release | AFK | 014 |
 | [018](018-postgres-native-concurrency-and-cleanup.md) | Postgres store: native concurrency, safe self-promotion, expiration cleanup | AFK | 017 |
+| [019](019-postgres-native-await.md) | `await()` as a real `IdempotencyStore` operation, with a native Postgres override | AFK | 009, 018 |
 
 Not published to an issue tracker — none is configured in this workspace. To turn
 these into tracked, agent-ready issues, set up the tracker and re-run the breakdown

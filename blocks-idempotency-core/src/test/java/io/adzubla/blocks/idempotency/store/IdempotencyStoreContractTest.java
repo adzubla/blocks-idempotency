@@ -10,6 +10,8 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -30,6 +32,14 @@ public abstract class IdempotencyStoreContractTest {
 
     private static final Duration TTL = Duration.ofMillis(150);
     private static final Duration PAST_TTL_SLEEP = TTL.plusMillis(150);
+
+    private static final Duration AWAIT_RESERVE_TTL = Duration.ofSeconds(10);
+    private static final Duration AWAIT_WAIT_TIMEOUT = Duration.ofSeconds(10);
+    private static final Duration AWAIT_TIMEOUT_BUDGET = Duration.ofMillis(150);
+    private static final Duration AWAIT_POLL_INTERVAL = Duration.ofMillis(20);
+    private static final Duration AWAIT_POLL_JITTER = Duration.ofMillis(10);
+    private static final Duration PRIMARY_ACTION_DELAY = Duration.ofMillis(200);
+    private static final long AWAIT_JOIN_TIMEOUT_MILLIS = 15_000;
 
     private IdempotencyStore store;
 
@@ -153,6 +163,66 @@ public abstract class IdempotencyStoreContractTest {
         store.release(key, staleToken);
 
         assertThat(store.find(key).orElseThrow().state()).isEqualTo(RecordState.IN_PROGRESS);
+    }
+
+    /**
+     * These three exercise {@code await} (ADR 0002 WAIT mode) - deliberately
+     * run on a separate thread from the {@code reserve} call, never the same
+     * one: {@code PostgresIdempotencyStore} binds a reservation's transaction
+     * to the reserving thread, so an {@code await} sharing that thread would
+     * silently join the reservation's own still-open transaction instead of
+     * genuinely blocking on it, defeating the point of the test.
+     */
+    @Test
+    void awaitResolvesWithTheCompletedRecordOnceThePrimaryCompletes() throws InterruptedException {
+        EffectiveKey key = key("k11");
+        String fenceToken = store.reserve(key, "fp", AWAIT_RESERVE_TTL).fenceToken().orElseThrow();
+        CachedResponse response = new CachedResponse(201, Map.of(), "{\"id\":1}".getBytes());
+
+        AtomicReference<Optional<IdempotencyRecord>> awaitResult = new AtomicReference<>();
+        Thread waiter = new Thread(() -> awaitResult.set(store.await(key, AWAIT_WAIT_TIMEOUT, AWAIT_POLL_INTERVAL, AWAIT_POLL_JITTER)));
+        waiter.start();
+
+        Thread.sleep(PRIMARY_ACTION_DELAY.toMillis());
+        store.complete(key, fenceToken, response, AWAIT_RESERVE_TTL);
+        waiter.join(AWAIT_JOIN_TIMEOUT_MILLIS);
+
+        assertThat(waiter.isAlive()).isFalse();
+        assertThat(awaitResult.get()).isPresent();
+        assertThat(awaitResult.get().orElseThrow().state()).isEqualTo(RecordState.COMPLETED);
+        assertThat(awaitResult.get().orElseThrow().response()).isEqualTo(response);
+    }
+
+    @Test
+    void awaitResolvesEmptyWhenThePrimaryReleasesTheKeyWhileWaiting() throws InterruptedException {
+        EffectiveKey key = key("k12");
+        String fenceToken = store.reserve(key, "fp", AWAIT_RESERVE_TTL).fenceToken().orElseThrow();
+
+        AtomicReference<Optional<IdempotencyRecord>> awaitResult = new AtomicReference<>();
+        Thread waiter = new Thread(() -> awaitResult.set(store.await(key, AWAIT_WAIT_TIMEOUT, AWAIT_POLL_INTERVAL, AWAIT_POLL_JITTER)));
+        waiter.start();
+
+        Thread.sleep(PRIMARY_ACTION_DELAY.toMillis());
+        store.release(key, fenceToken);
+        waiter.join(AWAIT_JOIN_TIMEOUT_MILLIS);
+
+        assertThat(waiter.isAlive()).isFalse();
+        assertThat(awaitResult.get()).isEmpty();
+    }
+
+    @Test
+    void awaitResolvesWithTheStillInProgressRecordWhenWaitTimeoutElapsesFirst() throws InterruptedException {
+        EffectiveKey key = key("k13");
+        store.reserve(key, "fp", AWAIT_RESERVE_TTL);
+
+        AtomicReference<Optional<IdempotencyRecord>> awaitResult = new AtomicReference<>();
+        Thread waiter = new Thread(() -> awaitResult.set(store.await(key, AWAIT_TIMEOUT_BUDGET, AWAIT_POLL_INTERVAL, AWAIT_POLL_JITTER)));
+        waiter.start();
+        waiter.join(AWAIT_JOIN_TIMEOUT_MILLIS);
+
+        assertThat(waiter.isAlive()).isFalse();
+        assertThat(awaitResult.get()).isPresent();
+        assertThat(awaitResult.get().orElseThrow().state()).isEqualTo(RecordState.IN_PROGRESS);
     }
 
     private static EffectiveKey key(String value) {
