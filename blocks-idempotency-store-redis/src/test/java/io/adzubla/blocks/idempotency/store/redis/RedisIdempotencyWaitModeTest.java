@@ -71,7 +71,8 @@ class RedisIdempotencyWaitModeTest {
         assertThat(primaryDecision).isInstanceOf(EngineDecision.Proceed.class);
         String fenceToken = ((EngineDecision.Proceed) primaryDecision).fenceToken();
 
-        try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
             Future<?> primaryCompletion = executor.submit(() -> {
                 try {
                     Thread.sleep(PRIMARY_COMPLETION_DELAY.toMillis());
@@ -93,6 +94,8 @@ class RedisIdempotencyWaitModeTest {
             // Genuinely polled past the primary's completion delay, not an
             // instant/coincidental result.
             assertThat(elapsed).isGreaterThanOrEqualTo(PRIMARY_COMPLETION_DELAY.minusMillis(50));
+        } finally {
+            executor.shutdown();
         }
     }
 }

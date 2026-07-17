@@ -85,7 +85,8 @@ class PostgresNativeConcurrencyTest {
         CountDownLatch primaryReserved = new CountDownLatch(1);
         CountDownLatch releasePrimary = new CountDownLatch(1);
 
-        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
             Future<String> primary = executor.submit(() -> {
                 String fenceToken = store.reserve(key, "fp", TTL).fenceToken().orElseThrow();
                 primaryReserved.countDown();
@@ -110,6 +111,8 @@ class PostgresNativeConcurrencyTest {
 
             assertThat(result.outcome()).isEqualTo(ReservationResult.Outcome.EXISTS);
             assertThat(result.existing().orElseThrow().isCompleted()).isTrue();
+        } finally {
+            executor.shutdown();
         }
     }
 
@@ -119,7 +122,8 @@ class PostgresNativeConcurrencyTest {
         CountDownLatch primaryReserved = new CountDownLatch(1);
         CachedResponse response = new CachedResponse(201, Map.of(), "{\"id\":1}".getBytes());
 
-        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
             Future<Void> primary = executor.submit(() -> {
                 String fenceToken = store.reserve(key, "fp", TTL).fenceToken().orElseThrow();
                 primaryReserved.countDown();
@@ -134,6 +138,8 @@ class PostgresNativeConcurrencyTest {
 
             assertThat(waiterResult.outcome()).isEqualTo(ReservationResult.Outcome.EXISTS);
             assertThat(waiterResult.existing().orElseThrow().response()).isEqualTo(response);
+        } finally {
+            executor.shutdown();
         }
     }
 
@@ -142,7 +148,8 @@ class PostgresNativeConcurrencyTest {
         EffectiveKey key = key("rollback-1");
         CountDownLatch primaryReserved = new CountDownLatch(1);
 
-        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
             Future<Void> primary = executor.submit(() -> {
                 String fenceToken = store.reserve(key, "fp", TTL).fenceToken().orElseThrow();
                 primaryReserved.countDown();
@@ -171,6 +178,8 @@ class PostgresNativeConcurrencyTest {
             // owning and completing the reservation - exactly once.
             assertThat(waiterResult.outcome()).isEqualTo(ReservationResult.Outcome.RESERVED);
             assertThat(store.find(key).orElseThrow().isCompleted()).isTrue();
+        } finally {
+            executor.shutdown();
         }
     }
 
@@ -182,7 +191,8 @@ class PostgresNativeConcurrencyTest {
         CountDownLatch primaryReserved = new CountDownLatch(1);
         CountDownLatch releasePrimary = new CountDownLatch(1);
 
-        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
             Future<Void> primary = executor.submit(() -> {
                 String fenceToken = boundedStore.reserve(key, "fp", TTL).fenceToken().orElseThrow();
                 primaryReserved.countDown();
@@ -207,6 +217,8 @@ class PostgresNativeConcurrencyTest {
 
             releasePrimary.countDown();
             primary.get(5, TimeUnit.SECONDS);
+        } finally {
+            executor.shutdown();
         }
     }
 

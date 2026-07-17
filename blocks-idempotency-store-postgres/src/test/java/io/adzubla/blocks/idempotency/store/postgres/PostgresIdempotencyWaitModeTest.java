@@ -105,7 +105,8 @@ class PostgresIdempotencyWaitModeTest {
         CachedResponse response = new CachedResponse(201, Map.of(), "{\"id\":1}".getBytes());
         CountDownLatch primaryReserved = new CountDownLatch(1);
 
-        try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
             Future<Void> primary = executor.submit(() -> {
                 EngineDecision decision = primaryEngine.before(key, "fp", LOCK_TTL, OnStoreFailure.OPEN, WhenInProgress.REJECT, WAIT_TIMEOUT);
                 String fenceToken = ((EngineDecision.Proceed) decision).fenceToken();
@@ -129,6 +130,8 @@ class PostgresIdempotencyWaitModeTest {
             // polling await() would have slept through first) - proves the
             // row lock, not a poll, is what unblocked this.
             assertThat(elapsed).isLessThan(Duration.ofSeconds(2));
+        } finally {
+            executor.shutdown();
         }
     }
 
@@ -137,7 +140,8 @@ class PostgresIdempotencyWaitModeTest {
         EffectiveKey key = new EffectiveKey("POST", "/orders", "", "wait-native-2");
         CountDownLatch primaryReserved = new CountDownLatch(1);
 
-        try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
             Future<Void> primary = executor.submit(() -> {
                 EngineDecision decision = primaryEngine.before(key, "fp", LOCK_TTL, OnStoreFailure.OPEN, WhenInProgress.REJECT, WAIT_TIMEOUT);
                 String fenceToken = ((EngineDecision.Proceed) decision).fenceToken();
@@ -153,6 +157,8 @@ class PostgresIdempotencyWaitModeTest {
 
             assertThat(waiterDecision).isInstanceOf(EngineDecision.Reject.class);
             assertThat(((EngineDecision.Reject) waiterDecision).reason()).isEqualTo(RejectReason.RELEASED);
+        } finally {
+            executor.shutdown();
         }
     }
 }

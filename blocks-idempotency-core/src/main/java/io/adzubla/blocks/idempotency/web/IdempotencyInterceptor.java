@@ -106,31 +106,38 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
         IdempotencyEngine engine = engineRegistry.engine(policy.store());
         EngineDecision decision = engine.before(key, fingerprint, properties.getLockTtl(), policy.onStoreFailure(),
                 policy.whenInProgress(), properties.getWaitTimeout());
-        return switch (decision) {
-            case EngineDecision.Replay replay -> {
-                ResponseReplayer.replay(response, replay.response(), properties.getReplay().getHeaderName());
-                yield false;
-            }
-            case EngineDecision.Collision collision -> throw new IdempotencyCollisionException();
-            case EngineDecision.Reject reject -> throw new IdempotencyConflictException(reject.reason(), reject.retryAfter());
-            // Terminal: the effect ran but its response isn't replayable - no Retry-After, retrying can't help.
-            case EngineDecision.Unavailable unavailable -> throw new IdempotencyResponseUnavailableException();
-            case EngineDecision.FailClosed failClosed -> throw new IdempotencyFailClosedException();
-            case EngineDecision.ProceedUnprotected proceedUnprotected -> {
-                // The store is down and the posture is fail-open: run the
-                // handler, but there's no reservation to track - skip the
-                // attributes afterCompletion keys off, and let it no-op.
-                yield true;
-            }
-            case EngineDecision.Proceed proceed -> {
-                request.setAttribute(ATTR_EFFECTIVE_KEY, key);
-                request.setAttribute(ATTR_POLICY, policy);
-                request.setAttribute(ATTR_FENCE_TOKEN, proceed.fenceToken());
-                request.setAttribute(ATTR_ENGINE, engine);
-                yield true;
-            }
-            case null -> true;
-        };
+
+        if (decision instanceof EngineDecision.Replay replay) {
+            ResponseReplayer.replay(response, replay.response(), properties.getReplay().getHeaderName());
+            return false;
+        }
+        if (decision instanceof EngineDecision.Collision) {
+            throw new IdempotencyCollisionException();
+        }
+        if (decision instanceof EngineDecision.Reject reject) {
+            throw new IdempotencyConflictException(reject.reason(), reject.retryAfter());
+        }
+        // Terminal: the effect ran but its response isn't replayable - no Retry-After, retrying can't help.
+        if (decision instanceof EngineDecision.Unavailable) {
+            throw new IdempotencyResponseUnavailableException();
+        }
+        if (decision instanceof EngineDecision.FailClosed) {
+            throw new IdempotencyFailClosedException();
+        }
+        if (decision instanceof EngineDecision.ProceedUnprotected) {
+            // The store is down and the posture is fail-open: run the
+            // handler, but there's no reservation to track - skip the
+            // attributes afterCompletion keys off, and let it no-op.
+            return true;
+        }
+        if (decision instanceof EngineDecision.Proceed proceed) {
+            request.setAttribute(ATTR_EFFECTIVE_KEY, key);
+            request.setAttribute(ATTR_POLICY, policy);
+            request.setAttribute(ATTR_FENCE_TOKEN, proceed.fenceToken());
+            request.setAttribute(ATTR_ENGINE, engine);
+            return true;
+        }
+        return true;
     }
 
     @Override
