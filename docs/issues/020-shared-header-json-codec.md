@@ -1,7 +1,7 @@
 # Slice 020 — Extract a shared header JSON codec for the store modules
 
 > Source: code-review smell scan (2026-07-16) · Type: AFK
-> Status: needs-triage
+> Status: wontfix
 
 ## What to build
 
