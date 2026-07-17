@@ -1,7 +1,7 @@
 # Slice 026 — Collapse the `IdempotencyException` subclass hierarchy
 
 > Source: code-review smell scan (2026-07-16) · Type: AFK
-> Status: needs-triage
+> Status: wontfix
 
 ## What to build
 
@@ -41,3 +41,21 @@ instead of four.
 
 - Filed from a code-smell review of the codebase (Middle Man, and the
   Shotgun Surgery it causes).
+- Declined (2026-07-17): the five subclasses aren't just internal plumbing -
+  they're a documented public extension point. `README.md:262-284` lists all
+  five by name in a table and shows `@ExceptionHandler(IdempotencyCollisionException.class)`
+  as the supported way to override one specific outcome; collapsing them
+  removes that per-type catch surface and forces consumers onto a runtime
+  `ex.reason()` check instead. The acceptance criteria only promised
+  wire-level behavior (status/headers/body) was unchanged and didn't account
+  for that Java-API-shape change, so "pure refactor" undersold what was
+  actually being proposed. Separately, the duplication being removed is thin
+  (each subclass is one `super(status, reason, message)` line - a static
+  factory table or a `RejectReason -> (status, message)` map isn't obviously
+  less code, just relocated), a new outcome already requires touching
+  `RejectReason` regardless of which design wins, and the sealed `permits`
+  clause currently buys a compiler error if a new subtype isn't wired up
+  everywhere - a safety net that weakens once everything funnels through
+  generic factories. No real pain point drove this (smell scan, not a bug or
+  friction report), so the marginal win doesn't justify touching a documented
+  public contract.
