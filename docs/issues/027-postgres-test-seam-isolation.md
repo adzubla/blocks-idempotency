@@ -1,7 +1,7 @@
 # Slice 027 — Move the Postgres test-only escape hatch out of the production class
 
 > Source: code-review smell scan (2026-07-16) · Type: AFK
-> Status: needs-triage
+> Status: wontfix
 
 ## What to build
 

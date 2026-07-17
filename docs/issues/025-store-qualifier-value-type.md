@@ -1,7 +1,7 @@
 # Slice 025 — Introduce a `StoreQualifier` value type
 
 > Source: code-review smell scan (2026-07-16) · Type: AFK
-> Status: needs-triage
+> Status: wontfix
 
 ## What to build
 

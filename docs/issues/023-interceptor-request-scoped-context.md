@@ -1,7 +1,7 @@
 # Slice 023 — Bundle interceptor request-scoped state into one context object
 
 > Source: code-review smell scan (2026-07-16) · Type: AFK
-> Status: needs-triage
+> Status: wontfix
 
 ## What to build
 
