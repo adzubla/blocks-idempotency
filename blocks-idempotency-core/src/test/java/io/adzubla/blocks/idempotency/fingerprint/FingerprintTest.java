@@ -63,4 +63,27 @@ class FingerprintTest {
 
         assertThat(first).isEqualTo(second);
     }
+
+    @Test
+    void digestBytesJoinsPartsWithNulSeparators() {
+        byte[] joined = Fingerprint.digestBytes(
+                "a".getBytes(StandardCharsets.UTF_8),
+                "b".getBytes(StandardCharsets.UTF_8));
+        byte[] notJoined = Fingerprint.digestBytes(
+                "a\0b".getBytes(StandardCharsets.UTF_8));
+
+        assertThat(joined).isEqualTo(notJoined);
+    }
+
+    @Test
+    void digestBytesIsSensitiveToPartBoundaries() {
+        byte[] abThenC = Fingerprint.digestBytes(
+                "ab".getBytes(StandardCharsets.UTF_8),
+                "c".getBytes(StandardCharsets.UTF_8));
+        byte[] aThenBc = Fingerprint.digestBytes(
+                "a".getBytes(StandardCharsets.UTF_8),
+                "bc".getBytes(StandardCharsets.UTF_8));
+
+        assertThat(abThenC).isNotEqualTo(aThenBc);
+    }
 }

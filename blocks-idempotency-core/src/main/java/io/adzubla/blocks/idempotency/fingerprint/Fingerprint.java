@@ -28,14 +28,28 @@ public final class Fingerprint {
     }
 
     public static String sha256(String method, String path, byte[] body) {
+        byte[] digest = digestBytes(
+                method.getBytes(StandardCharsets.UTF_8),
+                path.getBytes(StandardCharsets.UTF_8),
+                normalize(body));
+        return HexFormat.of().formatHex(digest);
+    }
+
+    /**
+     * SHA-256 over {@code parts} joined with a {@code NUL} separator - the digest
+     * shape shared by this class's own {@link #sha256} and by
+     * {@code EffectiveKey.digestBytes()}.
+     */
+    public static byte[] digestBytes(byte[]... parts) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            digest.update(method.getBytes(StandardCharsets.UTF_8));
-            digest.update((byte) 0);
-            digest.update(path.getBytes(StandardCharsets.UTF_8));
-            digest.update((byte) 0);
-            digest.update(normalize(body));
-            return HexFormat.of().formatHex(digest.digest());
+            for (int i = 0; i < parts.length; i++) {
+                if (i > 0) {
+                    digest.update((byte) 0);
+                }
+                digest.update(parts[i]);
+            }
+            return digest.digest();
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 not available", e);
         }

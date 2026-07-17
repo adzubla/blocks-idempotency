@@ -18,9 +18,6 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.HexFormat;
@@ -194,19 +191,7 @@ public class RedisIdempotencyStore implements IdempotencyStore {
     }
 
     private String redisKey(EffectiveKey key) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            digest.update(key.method().getBytes(StandardCharsets.UTF_8));
-            digest.update((byte) 0);
-            digest.update(key.path().getBytes(StandardCharsets.UTF_8));
-            digest.update((byte) 0);
-            digest.update(key.principal().getBytes(StandardCharsets.UTF_8));
-            digest.update((byte) 0);
-            digest.update(key.value().getBytes(StandardCharsets.UTF_8));
-            return keyPrefix + HexFormat.of().formatHex(digest.digest());
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("SHA-256 not available", e);
-        }
+        return keyPrefix + HexFormat.of().formatHex(key.digestBytes());
     }
 
     private String toJson(Map<String, List<String>> headers) {
