@@ -1,6 +1,7 @@
 package io.adzubla.blocks.idempotency.fingerprint;
 
 import tools.jackson.core.JacksonException;
+import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.SerializationFeature;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -22,6 +23,7 @@ public final class Fingerprint {
 
     private static final JsonMapper CANONICAL_MAPPER = JsonMapper.builder()
             .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
+            .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
             .build();
 
     private Fingerprint() {

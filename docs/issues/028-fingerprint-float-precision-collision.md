@@ -1,7 +1,6 @@
 # Slice 028 — Fingerprint collapses distinct float payloads to one fingerprint
 
 > Source: bug hunt (2026-07-17) · Type: AFK
-> Status: needs-triage
 
 ## What to build
 
@@ -22,25 +21,24 @@ Reproduced empirically: `9007199254740992.0` and `9007199254740993.0` are
 distinct decimal literals that both parse to the same double; likewise
 `1.0` and `1.000000000000000001`.
 
-This slice **exposes and documents** the defect with a disabled repro test; the
-fix is deferred (filed unfixed by request). A fix would likely bind numbers
-losslessly during canonicalization (e.g. `USE_BIG_DECIMAL_FOR_FLOATS` /
-`USE_BIG_INTEGER_FOR_INTS`, or hashing the raw normalized bytes without a
-number round-trip), with attention to the flip side — `{"n":1}` vs `{"n":1.0}`
-currently produce *different* fingerprints (a false collision / 422 on a
-legitimate retry).
+**Fixed** by binding floating-point numbers to exact `BigDecimal` during
+canonicalization (`DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS`) instead
+of lossy `double`; integral numbers are already lossless (`long`/`BigInteger`).
+Numbers are thus compared by their exact JSON text, so the flip side —
+`{"n":1}` vs `{"n":1.0}` — deliberately stays *distinct* (a conservative choice:
+a differing byte payload is treated as a collision, never silently merged).
 
 ## Acceptance criteria
 
-- [x] A disabled repro exists:
+- [x] A regression test exists:
       `FingerprintTest.distinctFloatPayloadsRoundingToTheSameDoubleMustNotShareAFingerprint`
-      (`@Disabled`, pointing here). Removing `@Disabled` fails today because both
-      bodies hash identically.
-- [ ] Two payloads that differ only in a float beyond `double` precision produce
+      (enabled, passing).
+- [x] Two payloads that differ only in a float beyond `double` precision produce
       **different** fingerprints.
-- [ ] Number canonicalization is decided consistently for the reverse case
-      (`1` vs `1.0`, integer vs float), documented, and covered by a test.
-- [ ] Existing `FingerprintTest` cases (key reordering, empty body) still pass.
+- [x] Number canonicalization is decided consistently for the reverse case
+      (`1` vs `1.0`, integer vs float) — kept *distinct*, pinned by
+      `FingerprintTest.integerAndFloatSpellingsOfTheSameValueProduceDifferentFingerprints`.
+- [x] Existing `FingerprintTest` cases (key reordering, empty body) still pass.
 
 ## Blocked by
 
@@ -49,6 +47,11 @@ legitimate retry).
 ## Comments
 
 - Filed from a code read of the shipped library (bug hunt, 2026-07-17), not a
-  friction report. Filed **unfixed by request**: expose now, fix later.
-- Impact is a correctness/safety issue, not cosmetic — a different request can
-  receive another request's cached response.
+  friction report.
+- Impact was a correctness/safety issue, not cosmetic — a different request
+  could receive another request's cached response.
+- Implemented (2026-07-17): `Fingerprint.CANONICAL_MAPPER` now enables
+  `USE_BIG_DECIMAL_FOR_FLOATS` so floats are read as exact decimals rather than
+  rounded to `double`. Repro test un-`@Disabled` and now passes; a second test
+  pins the `1` vs `1.0` decision; full `FingerprintTest` and the core suite pass
+  (`mvn test -pl blocks-idempotency-core -am`).

@@ -1,6 +1,5 @@
 package io.adzubla.blocks.idempotency.fingerprint;
 
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -66,21 +65,15 @@ class FingerprintTest {
     }
 
     /**
-     * Exposes a bug (docs/issues/028-fingerprint-float-precision-collision.md):
-     * {@link Fingerprint#normalize} parses the body and re-serializes it, and
-     * Jackson binds JSON floating-point numbers to {@code double}. Two
-     * genuinely different payloads whose amounts round to the same IEEE-754
-     * double collapse to byte-identical canonical JSON and thus the same
-     * fingerprint - so the engine's collision guard treats a different payload
-     * as a duplicate and replays the first caller's cached response instead of
-     * returning 422. {@code 9007199254740993.0} and {@code 9007199254740992.0}
-     * are distinct decimals that both parse to the same double.
-     *
-     * <p>{@code @Disabled} so CI stays green while the fix is deferred; remove
-     * it to reproduce the failure.
+     * Regression for docs/issues/028-fingerprint-float-precision-collision.md:
+     * two genuinely different payloads whose floats round to the same IEEE-754
+     * double ({@code 9007199254740992.0} and {@code 9007199254740993.0}) must
+     * not share a fingerprint - otherwise a different payload would replay the
+     * first caller's cached response instead of being flagged as a collision.
+     * Fixed by reading floats as exact {@link java.math.BigDecimal} rather than
+     * lossy {@code double}.
      */
     @Test
-    @Disabled("Exposes bug: docs/issues/028-fingerprint-float-precision-collision.md; remove @Disabled to reproduce")
     void distinctFloatPayloadsRoundingToTheSameDoubleMustNotShareAFingerprint() {
         String withOneAmount = Fingerprint.sha256("POST", "/payments",
                 "{\"amount\":9007199254740992.0}".getBytes(StandardCharsets.UTF_8));
@@ -88,6 +81,22 @@ class FingerprintTest {
                 "{\"amount\":9007199254740993.0}".getBytes(StandardCharsets.UTF_8));
 
         assertThat(withOneAmount).isNotEqualTo(withAnotherAmount);
+    }
+
+    /**
+     * The reverse of the precision fix: numbers are compared by their exact
+     * JSON text, so the integer and float spellings of the same value are
+     * distinct fingerprints (a conservative choice - a differing byte payload
+     * is treated as a collision, never silently merged).
+     */
+    @Test
+    void integerAndFloatSpellingsOfTheSameValueProduceDifferentFingerprints() {
+        String asInteger = Fingerprint.sha256("POST", "/payments",
+                "{\"amount\":1}".getBytes(StandardCharsets.UTF_8));
+        String asFloat = Fingerprint.sha256("POST", "/payments",
+                "{\"amount\":1.0}".getBytes(StandardCharsets.UTF_8));
+
+        assertThat(asInteger).isNotEqualTo(asFloat);
     }
 
     @Test
