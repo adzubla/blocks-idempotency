@@ -57,3 +57,18 @@ Not published to an issue tracker — none is configured in this workspace. To t
 these into tracked, agent-ready issues, set up the tracker and re-run the breakdown
 against these files (apply the `ready-for-agent` triage label; `ready-for-human`
 for the HITL slice).
+
+## Batch 4 — bug hunt (2026-07-17)
+
+Defects found by a code read of the shipped library; each filed with a
+`@Disabled` repro test, unfixed by request (expose now, fix later). Removing a
+test's `@Disabled` reproduces its failure. All slices are **AFK**.
+
+| # | Slice | Type | Blocked by |
+|---|-------|------|-----------|
+| [028](028-fingerprint-float-precision-collision.md) | Fingerprint collapses distinct float payloads → missed collision (replays wrong response) | AFK | — |
+| [029](029-store-reserve-conflict-vanished-record-500.md) | `reserve()` re-read race throws unmapped exception → raw 500, bypasses `onStoreFailure` | AFK | — |
+| [030](030-wait-mode-interrupt-uncontrolled-500.md) | Interrupt during WAIT polling escapes as `IllegalStateException` → 500 | AFK | — |
+| [031](031-default-await-clock-and-initial-check.md) | Default `await()` uses wall-clock (ignores injected `Clock`) and sleeps before first `find()` | AFK | — |
+| [032](032-redis-slow-primary-loses-response.md) | Redis silently drops a slow primary's response once `lock-ttl` passes (documented best-effort limitation) | AFK | — |
+| [033](033-postgres-dangling-reservation-scope.md) | Harden against a dangling Postgres reservation scope surviving thread reuse (defense-in-depth) | AFK | — |

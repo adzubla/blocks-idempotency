@@ -1,5 +1,6 @@
 package io.adzubla.blocks.idempotency.fingerprint;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -62,6 +63,31 @@ class FingerprintTest {
         String second = Fingerprint.sha256("POST", "/orders", new byte[0]);
 
         assertThat(first).isEqualTo(second);
+    }
+
+    /**
+     * Exposes a bug (docs/issues/028-fingerprint-float-precision-collision.md):
+     * {@link Fingerprint#normalize} parses the body and re-serializes it, and
+     * Jackson binds JSON floating-point numbers to {@code double}. Two
+     * genuinely different payloads whose amounts round to the same IEEE-754
+     * double collapse to byte-identical canonical JSON and thus the same
+     * fingerprint - so the engine's collision guard treats a different payload
+     * as a duplicate and replays the first caller's cached response instead of
+     * returning 422. {@code 9007199254740993.0} and {@code 9007199254740992.0}
+     * are distinct decimals that both parse to the same double.
+     *
+     * <p>{@code @Disabled} so CI stays green while the fix is deferred; remove
+     * it to reproduce the failure.
+     */
+    @Test
+    @Disabled("Exposes bug: docs/issues/028-fingerprint-float-precision-collision.md; remove @Disabled to reproduce")
+    void distinctFloatPayloadsRoundingToTheSameDoubleMustNotShareAFingerprint() {
+        String withOneAmount = Fingerprint.sha256("POST", "/payments",
+                "{\"amount\":9007199254740992.0}".getBytes(StandardCharsets.UTF_8));
+        String withAnotherAmount = Fingerprint.sha256("POST", "/payments",
+                "{\"amount\":9007199254740993.0}".getBytes(StandardCharsets.UTF_8));
+
+        assertThat(withOneAmount).isNotEqualTo(withAnotherAmount);
     }
 
     @Test
