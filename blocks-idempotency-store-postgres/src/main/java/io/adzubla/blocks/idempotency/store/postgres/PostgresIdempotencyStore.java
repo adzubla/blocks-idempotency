@@ -134,6 +134,19 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
     /** SQLState 55P03 ("lock_not_available") - raised when {@code lock_timeout} is exceeded. */
     private static final String SQLSTATE_LOCK_NOT_AVAILABLE = "55P03";
 
+    /**
+     * Bounded retries for the boundary race where the reservation upsert loses
+     * the conflict (the row wasn't stale enough to supersede) yet the row is
+     * already expired to read - {@code clock_timestamp()} advanced between the
+     * upsert's {@code expires_at < clock_timestamp()} check and {@code
+     * SELECT_RECORD}'s {@code expires_at > clock_timestamp()} filter. A retry's
+     * later {@code clock_timestamp()} can now supersede the stale row. If it
+     * keeps racing past this bound, {@code reserve} surfaces {@link
+     * StoreUnavailableException} so the {@code onStoreFailure} posture applies
+     * rather than leaking a raw 500.
+     */
+    private static final int MAX_RESERVE_ATTEMPTS = 8;
+
     private final JdbcTemplate jdbc;
     private final PlatformTransactionManager transactionManager;
     private final ObjectMapper headerMapper;
@@ -163,20 +176,30 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
             // position. Safe regardless - lockTimeout is trusted config, never
             // user input.
             jdbc.execute("SET LOCAL lock_timeout = '" + lockTimeout.toMillis() + "ms'");
-            Object[] args = concat(keyArgs(key), new Object[] {fingerprint, fenceToken, toPgInterval(lockTtl)});
-            boolean won = !jdbc.query(UPSERT_RESERVATION, (rs, rowNum) -> rs.getString(1), args).isEmpty();
-            if (won) {
-                bindScope(status, fenceToken);
-                return ReservationResult.reserved(fenceToken);
-            }
+            for (int attempt = 0; attempt < MAX_RESERVE_ATTEMPTS; attempt++) {
+                Object[] args = concat(keyArgs(key), new Object[] {fingerprint, fenceToken, toPgInterval(lockTtl)});
+                boolean won = !jdbc.query(UPSERT_RESERVATION, (rs, rowNum) -> rs.getString(1), args).isEmpty();
+                if (won) {
+                    bindScope(status, fenceToken);
+                    return ReservationResult.reserved(fenceToken);
+                }
 
-            // Lost the conflict: either a genuinely different, still-valid
-            // record exists, or (nested call on a thread with an already-open
-            // scope) it's our own not-yet-superseded reservation.
-            IdempotencyRecord existing = findRecord(key).orElseThrow(() ->
-                    new IllegalStateException("reservation conflict but no record visible for " + key));
-            transactionManager.commit(status);
-            return ReservationResult.exists(existing);
+                // Lost the conflict: either a genuinely different, still-valid
+                // record exists, or (nested call on a thread with an already-open
+                // scope) it's our own not-yet-superseded reservation.
+                Optional<IdempotencyRecord> existing = findRecord(key);
+                if (existing.isPresent()) {
+                    transactionManager.commit(status);
+                    return ReservationResult.exists(existing.get());
+                }
+                // Boundary race: lost the conflict, yet the row is already
+                // expired to read. clock_timestamp() advances on the retry, so
+                // the stale row can now be superseded rather than throwing.
+            }
+            // Still racing past the retry bound - surface as unavailable so the
+            // posture applies (rolled back by the catch below), never a raw 500.
+            throw new StoreUnavailableException(
+                    "reservation for " + key + " kept racing (lost the conflict but the record vanished on every retry)");
         } catch (RuntimeException e) {
             if (isLockTimeout(e)) {
                 // Gave up waiting on the row's lock before its owner committed

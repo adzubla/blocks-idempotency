@@ -1,7 +1,6 @@
 # Slice 029 — `reserve()` re-read race throws an unmapped exception → raw 500
 
 > Source: bug hunt (2026-07-17) · Type: AFK
-> Status: needs-triage
 
 ## What to build
 
@@ -26,25 +25,27 @@ empty and the code throws a bare `IllegalStateException`:
 The in-memory store is immune (a single atomic `compute` reads the existing
 record inside the critical section), so this is a store-level defect only.
 
-This slice **exposes and documents** the defect with a disabled repro test; the
-fix is deferred (filed unfixed by request). The likely fix is to treat a
-lost-conflict-then-vanished record as "the key is now free" and **retry the
-reservation** (it can win the second time), or at minimum route it through
-`StoreUnavailableException` so the `onStoreFailure` posture applies instead of a
-raw 500.
+**Fixed** by treating a lost-conflict-then-vanished record as "the key is free
+now" and **retrying** the reservation (bounded, `MAX_RESERVE_ATTEMPTS = 8`): the
+retry wins once the key is free (Redis re-`EXISTS`; Postgres's later
+`clock_timestamp()` supersedes the stale row). Only if it keeps racing past the
+bound does `reserve()` surface `StoreUnavailableException` so the
+`onStoreFailure` posture applies — never a raw 500. The bare
+`IllegalStateException` is gone from both stores.
 
 ## Acceptance criteria
 
-- [x] A disabled repro exists:
-      `RedisIdempotencyStoreReserveRaceTest.reserveMapsAVanishedConflictingRecordToStoreUnavailableRatherThanARaw500`
-      (`@Disabled`, pure Mockito, no container). Removing `@Disabled` fails today
-      because `reserve()` throws `IllegalStateException`.
-- [ ] A `reserve()` that loses the conflict but finds the record gone no longer
-      throws an unmapped `IllegalStateException`; it either retries and wins, or
-      surfaces as `StoreUnavailableException` (posture applies).
-- [ ] The equivalent Postgres boundary race
-      (`PostgresIdempotencyStore.java:176-177`) is fixed the same way.
-- [ ] Existing store contract tests still pass for both stores.
+- [x] A `reserve()` that loses the conflict but finds the record gone no longer
+      throws an unmapped `IllegalStateException`; it retries and wins, or (if the
+      race persists) surfaces as `StoreUnavailableException` (posture applies).
+      Covered by `RedisIdempotencyStoreReserveRaceTest` (retry-wins +
+      keeps-racing) and `PostgresIdempotencyStoreReserveRaceTest` (same, plus a
+      rollback assertion), both pure Mockito.
+- [x] The equivalent Postgres boundary race is fixed the same way
+      (`MAX_RESERVE_ATTEMPTS` retry loop in `PostgresIdempotencyStore.reserve`).
+- [x] Existing store contract tests still pass for both stores — full Redis
+      (24) and Postgres (44) module suites green, including the shared contract,
+      native-concurrency, and end-to-end tests.
 
 ## Blocked by
 
@@ -52,6 +53,10 @@ raw 500.
 
 ## Comments
 
-- Filed from a code read of the shipped library (bug hunt, 2026-07-17). Filed
-  **unfixed by request**: expose now, fix later.
+- Filed from a code read of the shipped library (bug hunt, 2026-07-17).
 - Same root cause in both real stores; Redis has by far the larger race window.
+- Implemented (2026-07-17): bounded retry loop in `RedisIdempotencyStore.reserve`
+  and `PostgresIdempotencyStore.reserve`, falling back to
+  `StoreUnavailableException` past `MAX_RESERVE_ATTEMPTS`. The former `@Disabled`
+  repro is now enabled and split into retry-wins and keeps-racing cases for both
+  stores; full store suites pass (`mvn test -pl blocks-idempotency-store-redis,blocks-idempotency-store-postgres -am`).

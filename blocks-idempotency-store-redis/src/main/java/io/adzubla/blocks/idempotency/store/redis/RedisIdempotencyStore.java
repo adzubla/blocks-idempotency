@@ -107,6 +107,16 @@ public class RedisIdempotencyStore implements IdempotencyStore {
             return 1
             """, Long.class);
 
+    /**
+     * Bounded retries for the benign race where {@code reserve} loses the
+     * conflict but the existing record has already vanished (its lock-ttl
+     * expired, or it was released) by the re-read: the key is free now, so a
+     * retry wins. If it keeps racing past this bound, {@code reserve} surfaces
+     * {@link StoreUnavailableException} so the engine's {@code onStoreFailure}
+     * posture applies, rather than leaking a raw 500.
+     */
+    private static final int MAX_RESERVE_ATTEMPTS = 8;
+
     private final StringRedisTemplate redis;
     private final ObjectMapper headerMapper;
     private final String keyPrefix;
@@ -120,15 +130,24 @@ public class RedisIdempotencyStore implements IdempotencyStore {
     @Override
     public ReservationResult reserve(EffectiveKey key, String fingerprint, Duration lockTtl) {
         String redisKey = redisKey(key);
-        String fenceToken = UUID.randomUUID().toString();
         return guarded(() -> {
-            Long won = redis.execute(RESERVE_SCRIPT, List.of(redisKey), fingerprint, fenceToken, String.valueOf(lockTtl.toMillis()));
-            if (Long.valueOf(1L).equals(won)) {
-                return ReservationResult.reserved(fenceToken);
+            for (int attempt = 0; attempt < MAX_RESERVE_ATTEMPTS; attempt++) {
+                String fenceToken = UUID.randomUUID().toString();
+                Long won = redis.execute(RESERVE_SCRIPT, List.of(redisKey), fingerprint, fenceToken, String.valueOf(lockTtl.toMillis()));
+                if (Long.valueOf(1L).equals(won)) {
+                    return ReservationResult.reserved(fenceToken);
+                }
+                Optional<IdempotencyRecord> existing = findRecord(redisKey);
+                if (existing.isPresent()) {
+                    return ReservationResult.exists(existing.get());
+                }
+                // Lost the conflict but the record vanished (its lock-ttl
+                // expired, or it was released) between the script's EXISTS check
+                // and this re-read - the key is free now, so retry rather than
+                // failing.
             }
-            IdempotencyRecord existing = findRecord(redisKey).orElseThrow(() ->
-                    new IllegalStateException("reservation conflict but no record visible for " + key));
-            return ReservationResult.exists(existing);
+            throw new StoreUnavailableException(
+                    "reservation for " + key + " kept racing (lost the conflict but the record vanished on every retry)");
         });
     }
 
