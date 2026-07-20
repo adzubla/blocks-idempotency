@@ -13,6 +13,21 @@ import java.util.Objects;
  */
 public record CachedResponse(int status, Map<String, List<String>> headers, byte[] body) {
 
+    /**
+     * Sentinel for "completed, nothing to cache" - used by a caller with no
+     * response to capture (e.g. a future messaging adapter, which completes a
+     * record purely to mark it done, not to replay anything). Since {@link
+     * #hasBody()} is false, {@code IdempotencyEngine#decisionForCompleted}
+     * resolves a record completed with this to {@code EngineDecision.Unavailable}
+     * - for HTTP that decision means a terminal error (crash window/oversized
+     * body), but a caller that always completes with this sentinel will see
+     * {@code Unavailable} as its routine, expected outcome instead (see ADR
+     * 0004), not an error to surface to the end user.
+     */
+    public static CachedResponse empty() {
+        return new CachedResponse(0, Map.of(), null);
+    }
+
     /** Whether a replayable body is present. */
     public boolean hasBody() {
         return body != null;

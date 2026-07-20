@@ -31,7 +31,7 @@ import java.util.function.Supplier;
  * Best-effort {@link IdempotencyStore} backed by Redis.
  *
  * <p>Design (ADR 0001, Redis key structure): one Redis Hash per record, keyed by
- * {@code {prefix}{sha256(method \0 path \0 principal \0 keyValue)}} - hashed for
+ * {@code {prefix}{sha256(route \0 handler \0 principal \0 keyValue)}} - hashed for
  * collision-safety and bounded memory, single key per record so it's Cluster-safe
  * (no cross-slot operations). Reserve and complete are single Lua scripts: Redis
  * runs each script to completion without interleaving any other command, so the

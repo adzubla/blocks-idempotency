@@ -6,7 +6,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.security.Principal;
 
 /**
- * Composes the {@link EffectiveKey}: method + path + authenticated principal +
+ * Composes the {@link EffectiveKey}: route + handler + authenticated principal +
  * raw key value (see {@code CONTEXT.md} — Key scope).
  */
 public final class EffectiveKeyFactory {
@@ -27,7 +27,16 @@ public final class EffectiveKeyFactory {
     public static EffectiveKey create(HttpServletRequest request, String rawKey, boolean principalEnabled,
             String principalClaim, PrincipalClaimResolver resolver) {
         String principal = principalEnabled ? principalOf(request, principalClaim, resolver) : EffectiveKey.NO_PRINCIPAL;
-        return new EffectiveKey(request.getMethod(), request.getRequestURI(), principal, rawKey);
+        return new EffectiveKey(request.getRequestURI(), request.getMethod(), principal, rawKey);
+    }
+
+    /**
+     * Transport-neutral factory for callers with no {@link HttpServletRequest}
+     * (e.g. a future messaging adapter resolving {@code route}/{@code handler}
+     * from a message destination and listener id instead).
+     */
+    public static EffectiveKey create(String route, String handler, String principal, String value) {
+        return new EffectiveKey(route, handler, principal, value);
     }
 
     private static String principalOf(HttpServletRequest request, String principalClaim, PrincipalClaimResolver resolver) {

@@ -160,8 +160,8 @@ class IdempotencyEndToEndTest {
     @Test
     void concurrentDuplicateWhileInProgressIsRejectedWith409() throws Exception {
         String body = "{\"amount\":10}";
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-8");
-        String fingerprint = Fingerprint.sha256(key.method(), key.path(), body.getBytes(StandardCharsets.UTF_8));
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-8");
+        String fingerprint = Fingerprint.sha256(key.route(), key.handler(), body.getBytes(StandardCharsets.UTF_8));
         idempotencyStore.reserve(key, fingerprint, Duration.ofSeconds(30));
 
         mockMvc.perform(post("/orders")

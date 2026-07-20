@@ -30,7 +30,7 @@ class IdempotencyEngineTest {
 
     @Test
     void freshKeyProceeds() {
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-1");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-1");
 
         EngineDecision decision = engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
 
@@ -40,7 +40,7 @@ class IdempotencyEngineTest {
 
     @Test
     void completedKeyReplaysTheStoredResponse() {
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-2");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-2");
         String fenceToken = proceedToken(engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout));
         CachedResponse response = new CachedResponse(201, Map.of("Content-Type", java.util.List.of("application/json")), "{\"id\":1}".getBytes());
         engine.complete(key, fenceToken, response, responseTtl);
@@ -53,7 +53,7 @@ class IdempotencyEngineTest {
 
     @Test
     void concurrentDuplicateWithTheSameFingerprintIsRejected() {
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-3");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-3");
         engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
 
         EngineDecision decision = engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
@@ -66,8 +66,8 @@ class IdempotencyEngineTest {
 
     @Test
     void differentEffectiveKeysDoNotCollide() {
-        EffectiveKey key1 = new EffectiveKey("POST", "/orders", "", "key-4");
-        EffectiveKey key2 = new EffectiveKey("POST", "/orders", "", "key-5");
+        EffectiveKey key1 = new EffectiveKey("/orders", "POST", "", "key-4");
+        EffectiveKey key2 = new EffectiveKey("/orders", "POST", "", "key-5");
 
         engine.before(key1, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
         EngineDecision decision = engine.before(key2, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
@@ -77,7 +77,7 @@ class IdempotencyEngineTest {
 
     @Test
     void sameKeyDifferentFingerprintAgainstACompletedRecordIsACollision() {
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-6");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-6");
         String fenceToken = proceedToken(engine.before(key, "fp-original", lockTtl, openPosture, rejectMode, waitTimeout));
         CachedResponse response = new CachedResponse(201, Map.of(), "{\"id\":1}".getBytes());
         engine.complete(key, fenceToken, response, responseTtl);
@@ -89,7 +89,7 @@ class IdempotencyEngineTest {
 
     @Test
     void sameKeyDifferentFingerprintAgainstAnInProgressRecordIsACollision() {
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-7");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-7");
         engine.before(key, "fp-original", lockTtl, openPosture, rejectMode, waitTimeout);
 
         EngineDecision decision = engine.before(key, "fp-different", lockTtl, openPosture, rejectMode, waitTimeout);
@@ -99,7 +99,7 @@ class IdempotencyEngineTest {
 
     @Test
     void sameKeySameFingerprintStillReplaysAfterCompletion() {
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-8");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-8");
         String fenceToken = proceedToken(engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout));
         CachedResponse response = new CachedResponse(201, Map.of(), "{\"id\":1}".getBytes());
         engine.complete(key, fenceToken, response, responseTtl);
@@ -111,7 +111,7 @@ class IdempotencyEngineTest {
 
     @Test
     void releaseFreesTheKeyForAFreshReservation() {
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-9");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-9");
         String fenceToken = proceedToken(engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout));
 
         engine.release(key, fenceToken);
@@ -123,13 +123,13 @@ class IdempotencyEngineTest {
 
     @Test
     void completedKeyIsNotAffectedByAnUnrelatedRelease() {
-        EffectiveKey completedKey = new EffectiveKey("POST", "/orders", "", "key-10");
+        EffectiveKey completedKey = new EffectiveKey("/orders", "POST", "", "key-10");
         String fenceToken = proceedToken(engine.before(completedKey, "fp", lockTtl, openPosture, rejectMode, waitTimeout));
         CachedResponse response = new CachedResponse(201, Map.of(), "{\"id\":1}".getBytes());
         engine.complete(completedKey, fenceToken, response, responseTtl);
 
         // Never reserved, so any token is as good as none - release() must be a no-op either way.
-        EffectiveKey otherKey = new EffectiveKey("POST", "/orders", "", "key-11");
+        EffectiveKey otherKey = new EffectiveKey("/orders", "POST", "", "key-11");
         engine.release(otherKey, "unused");
 
         EngineDecision decision = engine.before(completedKey, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
@@ -140,7 +140,7 @@ class IdempotencyEngineTest {
     @Test
     void unavailableStoreWithFailOpenProceedsUnprotected() {
         store.setUnavailable(true);
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-12");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-12");
 
         EngineDecision decision = engine.before(key, "fp", lockTtl, OnStoreFailure.OPEN, rejectMode, waitTimeout);
 
@@ -150,7 +150,7 @@ class IdempotencyEngineTest {
     @Test
     void unavailableStoreWithFailClosedRejects() {
         store.setUnavailable(true);
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-13");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-13");
 
         EngineDecision decision = engine.before(key, "fp", lockTtl, OnStoreFailure.CLOSED, rejectMode, waitTimeout);
 
@@ -160,7 +160,7 @@ class IdempotencyEngineTest {
     @Test
     void storeRecoveringAfterAnOutageProceedsNormallyAgain() {
         store.setUnavailable(true);
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-14");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-14");
         engine.before(key, "fp", lockTtl, OnStoreFailure.OPEN, rejectMode, waitTimeout);
 
         store.setUnavailable(false);
@@ -171,7 +171,7 @@ class IdempotencyEngineTest {
 
     @Test
     void completeSwallowsAMidRequestStoreOutageInsteadOfPropagating() {
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-15");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-15");
         String fenceToken = proceedToken(engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout));
         CachedResponse response = new CachedResponse(201, Map.of(), "{\"id\":1}".getBytes());
         store.setUnavailable(true);
@@ -181,7 +181,7 @@ class IdempotencyEngineTest {
 
     @Test
     void releaseSwallowsAMidRequestStoreOutageInsteadOfPropagating() {
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-16");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-16");
         String fenceToken = proceedToken(engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout));
         store.setUnavailable(true);
 
@@ -193,7 +193,7 @@ class IdempotencyEngineTest {
         MutableClock clock = new MutableClock(Instant.parse("2024-01-01T00:00:00Z"), ZoneOffset.UTC);
         InMemoryIdempotencyStore clockedStore = new InMemoryIdempotencyStore(clock);
         IdempotencyEngine clockedEngine = new IdempotencyEngine(clockedStore);
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-17");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-17");
         String fenceToken = proceedToken(clockedEngine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout));
         CachedResponse response = new CachedResponse(201, Map.of(), "{\"id\":1}".getBytes());
         clockedEngine.complete(key, fenceToken, response, responseTtl);
@@ -209,7 +209,7 @@ class IdempotencyEngineTest {
         MutableClock clock = new MutableClock(Instant.parse("2024-01-01T00:00:00Z"), ZoneOffset.UTC);
         InMemoryIdempotencyStore clockedStore = new InMemoryIdempotencyStore(clock);
         IdempotencyEngine clockedEngine = new IdempotencyEngine(clockedStore);
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-18");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-18");
         String fenceToken = proceedToken(clockedEngine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout));
         CachedResponse response = new CachedResponse(201, Map.of(), "{\"id\":1}".getBytes());
         clockedEngine.complete(key, fenceToken, response, responseTtl);
@@ -225,7 +225,7 @@ class IdempotencyEngineTest {
         MutableClock clock = new MutableClock(Instant.parse("2024-01-01T00:00:00Z"), ZoneOffset.UTC);
         InMemoryIdempotencyStore clockedStore = new InMemoryIdempotencyStore(clock);
         IdempotencyEngine clockedEngine = new IdempotencyEngine(clockedStore);
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-19");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-19");
         String fenceToken = proceedToken(clockedEngine.before(key, "fp-original", lockTtl, openPosture, rejectMode, waitTimeout));
         CachedResponse response = new CachedResponse(201, Map.of(), "{\"id\":1}".getBytes());
         clockedEngine.complete(key, fenceToken, response, responseTtl);
@@ -243,7 +243,7 @@ class IdempotencyEngineTest {
         MutableClock clock = new MutableClock(Instant.parse("2024-01-01T00:00:00Z"), ZoneOffset.UTC);
         InMemoryIdempotencyStore clockedStore = new InMemoryIdempotencyStore(clock);
         IdempotencyEngine clockedEngine = new IdempotencyEngine(clockedStore);
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-20");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-20");
         clockedEngine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
 
         // No complete()/release() - simulates a crashed primary; its lock
@@ -262,7 +262,7 @@ class IdempotencyEngineTest {
     @Test
     void waitReplaysOncePrimaryCompletes() {
         IdempotencyEngine waitEngine = new IdempotencyEngine(store, Duration.ofMillis(15), Duration.ofMillis(10));
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-23");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-23");
         String fenceToken = proceedToken(engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout));
         CachedResponse response = new CachedResponse(201, Map.of(), "{\"id\":1}".getBytes());
 
@@ -280,7 +280,7 @@ class IdempotencyEngineTest {
     @Test
     void waitReturnsRejectWithReleasedReasonWhenTheKeyDisappears() {
         IdempotencyEngine waitEngine = new IdempotencyEngine(store, Duration.ofMillis(15), Duration.ofMillis(10));
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-24");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-24");
         String fenceToken = proceedToken(engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout));
 
         CompletableFuture.runAsync(() -> {
@@ -297,7 +297,7 @@ class IdempotencyEngineTest {
     @Test
     void waitReturnsRejectWithTimeoutReasonAndIsBoundedByWaitTimeout() {
         IdempotencyEngine waitEngine = new IdempotencyEngine(store, Duration.ofMillis(15), Duration.ofMillis(5));
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-25");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-25");
         engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
         Duration shortWaitTimeout = Duration.ofMillis(80);
 
@@ -316,7 +316,7 @@ class IdempotencyEngineTest {
     @Test
     void waitAppliesTheStoreFailurePostureIfTheStoreGoesDownMidPoll() {
         IdempotencyEngine waitEngine = new IdempotencyEngine(store, Duration.ofMillis(15), Duration.ofMillis(10));
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-28");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-28");
         engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
 
         CompletableFuture.runAsync(() -> {
@@ -331,7 +331,7 @@ class IdempotencyEngineTest {
 
     @Test
     void completedWithoutBodyIsReportedAsResponseUnavailable() {
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-26");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-26");
         String fenceToken = proceedToken(engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout));
         CachedResponse notReplayable = new CachedResponse(201, Map.of(), null);
         engine.complete(key, fenceToken, notReplayable, responseTtl);
@@ -342,9 +342,25 @@ class IdempotencyEngineTest {
     }
 
     @Test
+    void completedWithTheEmptySentinelIsReportedAsResponseUnavailable() {
+        // A future messaging caller always completes with CachedResponse.empty()
+        // (no response to cache - see ADR 0004): decisionForCompleted() must
+        // still route it through Unavailable, not throw or return Replay, since
+        // that's how a messaging adapter's translation layer tells "routine
+        // duplicate skip" (Unavailable) apart from "fresh reservation".
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-29");
+        String fenceToken = proceedToken(engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout));
+        engine.complete(key, fenceToken, CachedResponse.empty(), responseTtl);
+
+        EngineDecision decision = engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
+
+        assertThat(decision).isInstanceOf(EngineDecision.Unavailable.class);
+    }
+
+    @Test
     void waiterAlsoReportsResponseUnavailableWhenThePrimaryCompletesWithoutABody() {
         IdempotencyEngine waitEngine = new IdempotencyEngine(store, Duration.ofMillis(15), Duration.ofMillis(10));
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-27");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-27");
         String fenceToken = proceedToken(engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout));
         CachedResponse notReplayable = new CachedResponse(201, Map.of(), null);
 

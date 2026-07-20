@@ -38,19 +38,19 @@ being HTTP-named. Per the PRD §3 and the phased build order's Phase 1.
 
 ## Acceptance criteria
 
-- [ ] `EffectiveKey` has `route`/`handler`/`principal`/`value` fields — no
+- [x] `EffectiveKey` has `route`/`handler`/`principal`/`value` fields — no
       leftover `method`/`path` references anywhere in `core` or
       `store-postgres`
-- [ ] `Fingerprint.sha256(route, handler, body)` — param names updated
-- [ ] `V1__idempotency_record.sql`'s columns are `route`/`handler` (edited
+- [x] `Fingerprint.sha256(route, handler, body)` — param names updated
+- [x] `V1__idempotency_record.sql`'s columns are `route`/`handler` (edited
       directly, no V2 migration file); `PostgresIdempotencyStore`'s SQL
       updated to match
-- [ ] `CachedResponse.empty()` (or equivalent) exists; a test asserts
+- [x] `CachedResponse.empty()` (or equivalent) exists; a test asserts
       `IdempotencyEngine.decisionForCompleted(...)` on a record completed
       with it returns `Unavailable`
-- [ ] `EffectiveKeyFactory.create(String route, String handler, String
+- [x] `EffectiveKeyFactory.create(String route, String handler, String
       principal, String value)` overload exists, covered by a unit test
-- [ ] Full existing test suite passes unchanged — pure rename/addition, no
+- [x] Full existing test suite passes unchanged — pure rename/addition, no
       behavior change: `mvn test -pl blocks-idempotency-core -am`,
       `mvn test -pl blocks-idempotency-store-postgres -am`,
       `mvn test -pl blocks-idempotency-store-redis -am`

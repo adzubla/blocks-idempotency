@@ -8,9 +8,11 @@
 -- fenced against acting on a reservation that was superseded this way.
 
 CREATE TABLE idempotency_record (
-    -- Scope / reservation (endpoint + principal + key value)
-    http_method      VARCHAR(10)   NOT NULL,
-    path             VARCHAR(512)  NOT NULL,
+    -- Scope / reservation (operation identity + principal + key value):
+    -- route = where it came in on (HTTP path); handler = which code
+    -- processes it (HTTP method+controller).
+    route            VARCHAR(512)  NOT NULL,
+    handler          VARCHAR(10)   NOT NULL,
     principal        VARCHAR(255)  NOT NULL DEFAULT '',   -- '' = unauthenticated route
     idempotency_key  VARCHAR(255)  NOT NULL,              -- opaque value
 
@@ -18,7 +20,7 @@ CREATE TABLE idempotency_record (
     -- VARCHAR, not CHAR: Postgres space-pads CHAR(n) values on read, which
     -- corrupts any fingerprint shorter than 64 bytes (SHA-256 hex is always
     -- exactly 64 - a fixed test fixture like "fp" is not).
-    fingerprint      VARCHAR(64)   NOT NULL,              -- SHA-256 hex of method+path+normalized body
+    fingerprint      VARCHAR(64)   NOT NULL,              -- SHA-256 hex of route+handler+normalized body
 
     -- Fences complete()/release() to the exact reservation attempt that
     -- issued them (ADR 0003): a caller whose reservation was superseded by a
@@ -39,7 +41,7 @@ CREATE TABLE idempotency_record (
     created_at       TIMESTAMPTZ   NOT NULL DEFAULT now(),
     expires_at       TIMESTAMPTZ   NOT NULL,
 
-    PRIMARY KEY (http_method, path, principal, idempotency_key)
+    PRIMARY KEY (route, handler, principal, idempotency_key)
 );
 
 CREATE INDEX ix_idempotency_expires_at ON idempotency_record (expires_at);

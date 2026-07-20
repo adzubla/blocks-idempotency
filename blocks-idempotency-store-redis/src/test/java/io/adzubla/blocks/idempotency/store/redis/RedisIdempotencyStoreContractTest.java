@@ -65,7 +65,7 @@ class RedisIdempotencyStoreContractTest extends IdempotencyStoreContractTest {
     @Test
     void aNonUtf8ResponseBodyRoundTripsLosslessly() {
         IdempotencyStore store = createStore();
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "binary-1");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "binary-1");
         byte[] binaryBody = {0x00, 0x01, (byte) 0xFF, (byte) 0x80, 0x7F, (byte) 0xC3, (byte) 0x28};
         String fenceToken = store.reserve(key, "fp", Duration.ofSeconds(30)).fenceToken().orElseThrow();
 

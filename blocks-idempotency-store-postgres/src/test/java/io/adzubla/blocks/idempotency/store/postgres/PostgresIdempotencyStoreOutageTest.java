@@ -124,7 +124,7 @@ class PostgresIdempotencyStoreOutageTest {
     }
 
     private static EffectiveKey key(String value) {
-        return new EffectiveKey("POST", "/orders", "", value);
+        return new EffectiveKey("/orders", "POST", "", value);
     }
 
     private record Fixture(HikariDataSource dataSource, PostgresIdempotencyStore store) {

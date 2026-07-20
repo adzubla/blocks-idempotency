@@ -17,7 +17,7 @@ class EffectiveKeyFactoryTest {
 
         EffectiveKey key = EffectiveKeyFactory.create(request, "key-1", true, "sub", DEFAULT_RESOLVER);
 
-        assertThat(key).isEqualTo(new EffectiveKey("POST", "/orders", "user-1", "key-1"));
+        assertThat(key).isEqualTo(new EffectiveKey("/orders", "POST", "user-1", "key-1"));
     }
 
     @Test
@@ -69,5 +69,15 @@ class EffectiveKeyFactoryTest {
         EffectiveKey key = EffectiveKeyFactory.create(request, "key-1", true, "email", resolver);
 
         assertThat(key.principal()).isEqualTo("user-1");
+    }
+
+    @Test
+    void transportNeutralOverloadBuildsTheSameShapeWithoutAnHttpServletRequest() {
+        // A future messaging adapter has no HttpServletRequest to resolve
+        // route/handler/principal from - e.g. a Kafka listener would pass the
+        // destination/topic as route and the listener id as handler directly.
+        EffectiveKey key = EffectiveKeyFactory.create("orders-topic", "order-created-listener", EffectiveKey.NO_PRINCIPAL, "key-1");
+
+        assertThat(key).isEqualTo(new EffectiveKey("orders-topic", "order-created-listener", EffectiveKey.NO_PRINCIPAL, "key-1"));
     }
 }

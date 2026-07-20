@@ -62,7 +62,7 @@ class IdempotencyStoreDefaultAwaitTest {
     @Test
     @Disabled("Exposes bug: docs/issues/031-default-await-clock-and-initial-check.md; remove @Disabled to reproduce")
     void awaitReturnsPromptlyForAnAlreadyCompletedKeyInsteadOfSleepingAPollInterval() {
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-1");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-1");
 
         long start = System.nanoTime();
         Optional<IdempotencyRecord> result =

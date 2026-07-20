@@ -101,7 +101,7 @@ class PostgresIdempotencyWaitModeTest {
 
     @Test
     void aWaitModeCallerObservesTheRowsLockReleaseRatherThanPolling() throws Exception {
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "wait-native-1");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "wait-native-1");
         CachedResponse response = new CachedResponse(201, Map.of(), "{\"id\":1}".getBytes());
         CountDownLatch primaryReserved = new CountDownLatch(1);
 
@@ -137,7 +137,7 @@ class PostgresIdempotencyWaitModeTest {
 
     @Test
     void aWaitModeCallerObservesAPrimarysRollbackAsReleased() throws Exception {
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "wait-native-2");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "wait-native-2");
         CountDownLatch primaryReserved = new CountDownLatch(1);
 
         ExecutorService executor = Executors.newSingleThreadExecutor();

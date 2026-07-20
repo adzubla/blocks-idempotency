@@ -101,7 +101,7 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
 
         EffectiveKey key = EffectiveKeyFactory.create(request, rawKey.get(), properties.getScope().isPrincipalEnabled(),
                 properties.getScope().getPrincipalClaim(), principalClaimResolver);
-        String fingerprint = Fingerprint.sha256(key.method(), key.path(), body);
+        String fingerprint = Fingerprint.sha256(key.route(), key.handler(), body);
 
         IdempotencyEngine engine = engineRegistry.engine(policy.store());
         EngineDecision decision = engine.before(key, fingerprint, properties.getLockTtl(), policy.onStoreFailure(),

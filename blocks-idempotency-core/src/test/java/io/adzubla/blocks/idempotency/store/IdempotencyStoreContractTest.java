@@ -226,6 +226,6 @@ public abstract class IdempotencyStoreContractTest {
     }
 
     private static EffectiveKey key(String value) {
-        return new EffectiveKey("POST", "/orders", "", value);
+        return new EffectiveKey("/orders", "POST", "", value);
     }
 }

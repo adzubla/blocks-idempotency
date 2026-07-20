@@ -71,7 +71,7 @@ public class IdempotencyEngine {
             return applyStoreFailurePosture(key, onStoreFailure, e);
         }
         if (result.outcome() == ReservationResult.Outcome.RESERVED) {
-            log.debug("Idempotency key reserved: {} {} key={}", key.method(), key.path(), key.value());
+            log.debug("Idempotency key reserved: {} {} key={}", key.route(), key.handler(), key.value());
             return new EngineDecision.Proceed(key, result.fenceToken().orElseThrow());
         }
 
@@ -116,34 +116,45 @@ public class IdempotencyEngine {
         return reject(key, RejectReason.TIMEOUT, lockTtl);
     }
 
+    /**
+     * {@code Unavailable} means different things to different callers: for
+     * HTTP it's a terminal error (crash window, or a body over {@code
+     * max-body-size} - see {@link CachedResponse}), surfaced to the client as
+     * a non-retryable 409. A caller that always completes a record with
+     * {@link CachedResponse#empty()} (no response to cache at all - e.g. a
+     * future messaging adapter, per ADR 0004) will see every completed
+     * duplicate resolve to {@code Unavailable} here, never {@code Replay} -
+     * that's its routine, expected outcome for a duplicate delivery, not an
+     * error condition to propagate.
+     */
     private EngineDecision decisionForCompleted(EffectiveKey key, CachedResponse response) {
         if (response != null && response.hasBody()) {
-            log.debug("Replaying cached response for idempotency key: {} {} key={}", key.method(), key.path(), key.value());
+            log.debug("Replaying cached response for idempotency key: {} {} key={}", key.route(), key.handler(), key.value());
             metrics.recordReplay();
             return new EngineDecision.Replay(response);
         }
-        log.debug("Idempotency response unavailable (not replayable): {} {} key={}", key.method(), key.path(), key.value());
+        log.debug("Idempotency response unavailable (not replayable): {} {} key={}", key.route(), key.handler(), key.value());
         return new EngineDecision.Unavailable();
     }
 
     private EngineDecision collision(EffectiveKey key) {
-        log.debug("Idempotency collision (fingerprint mismatch): {} {} key={}", key.method(), key.path(), key.value());
+        log.debug("Idempotency collision (fingerprint mismatch): {} {} key={}", key.route(), key.handler(), key.value());
         metrics.recordCollision();
         return new EngineDecision.Collision();
     }
 
     private EngineDecision reject(EffectiveKey key, RejectReason reason, Duration retryAfter) {
-        log.debug("Rejecting concurrent duplicate: {} {} key={} reason={}", key.method(), key.path(), key.value(), reason.wireValue());
+        log.debug("Rejecting concurrent duplicate: {} {} key={} reason={}", key.route(), key.handler(), key.value(), reason.wireValue());
         metrics.recordConcurrency();
         return new EngineDecision.Reject(reason, retryAfter);
     }
 
     private EngineDecision applyStoreFailurePosture(EffectiveKey key, OnStoreFailure onStoreFailure, StoreUnavailableException cause) {
         if (onStoreFailure == OnStoreFailure.CLOSED) {
-            log.warn("Idempotency store unavailable for {} {} - failing closed (503)", key.method(), key.path(), cause);
+            log.warn("Idempotency store unavailable for {} {} - failing closed (503)", key.route(), key.handler(), cause);
             return new EngineDecision.FailClosed();
         }
-        log.warn("Idempotency store unavailable for {} {} - failing open (unprotected)", key.method(), key.path(), cause);
+        log.warn("Idempotency store unavailable for {} {} - failing open (unprotected)", key.route(), key.handler(), cause);
         metrics.recordFailOpen();
         return new EngineDecision.ProceedUnprotected();
     }
@@ -151,7 +162,7 @@ public class IdempotencyEngine {
     public void complete(EffectiveKey key, String fenceToken, CachedResponse response, Duration responseTtl) {
         try {
             store.complete(key, fenceToken, response, responseTtl);
-            log.debug("Idempotency key completed: {} {} key={} status={}", key.method(), key.path(), key.value(), response.status());
+            log.debug("Idempotency key completed: {} {} key={} status={}", key.route(), key.handler(), key.value(), response.status());
         } catch (StoreUnavailableException e) {
             // The effect already ran; there's no response left to protect by
             // applying a posture here (that's only meaningful before
@@ -159,7 +170,7 @@ public class IdempotencyEngine {
             // until the store recovers - swallow rather than fail the
             // already-completed request out from under the caller.
             log.warn("Idempotency store unavailable while completing {} {} key={} - response won't be cached",
-                    key.method(), key.path(), key.value(), e);
+                    key.route(), key.handler(), key.value(), e);
         }
     }
 
@@ -167,11 +178,11 @@ public class IdempotencyEngine {
     public void release(EffectiveKey key, String fenceToken) {
         try {
             store.release(key, fenceToken);
-            log.debug("Idempotency key released: {} {} key={}", key.method(), key.path(), key.value());
+            log.debug("Idempotency key released: {} {} key={}", key.route(), key.handler(), key.value());
         } catch (StoreUnavailableException e) {
             // Same rationale as complete(): the effect already ran (or
             // failed) - nothing left to protect by escalating here.
-            log.warn("Idempotency store unavailable while releasing {} {} key={}", key.method(), key.path(), key.value(), e);
+            log.warn("Idempotency store unavailable while releasing {} {} key={}", key.route(), key.handler(), key.value(), e);
         }
     }
 }

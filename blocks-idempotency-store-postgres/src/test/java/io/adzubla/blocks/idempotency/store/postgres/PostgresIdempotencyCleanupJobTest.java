@@ -99,8 +99,8 @@ class PostgresIdempotencyCleanupJobTest {
     private static void insertRecord(String key, String expiresOffset) {
         jdbc.update("""
                 INSERT INTO idempotency_record
-                    (http_method, path, principal, idempotency_key, fingerprint, reservation_token, created_at, expires_at)
-                VALUES ('POST', '/orders', '', ?, 'fp', 'token-' || ?, clock_timestamp(), clock_timestamp() + ?::interval)
+                    (route, handler, principal, idempotency_key, fingerprint, reservation_token, created_at, expires_at)
+                VALUES ('/orders', 'POST', '', ?, 'fp', 'token-' || ?, clock_timestamp(), clock_timestamp() + ?::interval)
                 """, key, key, expiresOffset);
     }
 

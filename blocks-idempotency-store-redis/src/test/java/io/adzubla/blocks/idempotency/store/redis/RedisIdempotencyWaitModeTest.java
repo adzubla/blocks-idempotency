@@ -64,7 +64,7 @@ class RedisIdempotencyWaitModeTest {
         redisTemplate.afterPropertiesSet();
         RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, new ObjectMapper(), "idempotency-wait-test:");
         IdempotencyEngine engine = new IdempotencyEngine(store);
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "wait-1");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "wait-1");
         CachedResponse response = new CachedResponse(201, Map.of(), "{\"id\":1}".getBytes());
 
         EngineDecision primaryDecision = engine.before(key, "fp", LOCK_TTL, OnStoreFailure.OPEN, WhenInProgress.REJECT, WAIT_TIMEOUT);

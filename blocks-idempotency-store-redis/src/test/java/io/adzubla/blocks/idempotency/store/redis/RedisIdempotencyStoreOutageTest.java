@@ -48,7 +48,7 @@ class RedisIdempotencyStoreOutageTest {
         StringRedisTemplate redisTemplate = new StringRedisTemplate(connectionFactory);
         redisTemplate.afterPropertiesSet();
         RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, new ObjectMapper(), "idempotency-outage-test:");
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "outage-1");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "outage-1");
 
         // Sanity check: the store genuinely works against this container
         // before it's stopped - a false positive here (e.g. a
@@ -59,7 +59,7 @@ class RedisIdempotencyStoreOutageTest {
 
         REDIS.stop();
 
-        assertThatThrownBy(() -> store.reserve(new EffectiveKey("POST", "/orders", "", "outage-2"), "fp", Duration.ofSeconds(30)))
+        assertThatThrownBy(() -> store.reserve(new EffectiveKey("/orders", "POST", "", "outage-2"), "fp", Duration.ofSeconds(30)))
                 .isInstanceOf(StoreUnavailableException.class);
         connectionFactory.destroy();
     }

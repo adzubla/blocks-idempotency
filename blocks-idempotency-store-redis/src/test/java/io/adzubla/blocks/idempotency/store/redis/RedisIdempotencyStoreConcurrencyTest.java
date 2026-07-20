@@ -60,7 +60,7 @@ class RedisIdempotencyStoreConcurrencyTest {
         StringRedisTemplate redisTemplate = new StringRedisTemplate(connectionFactory);
         redisTemplate.afterPropertiesSet();
         RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, new ObjectMapper(), "idempotency-concurrency-test:");
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "race-1");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "race-1");
 
         ExecutorService executor = Executors.newFixedThreadPool(CONCURRENT_CALLERS);
         try {

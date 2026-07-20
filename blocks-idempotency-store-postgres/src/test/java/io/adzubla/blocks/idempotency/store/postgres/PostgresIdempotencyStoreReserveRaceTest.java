@@ -38,7 +38,7 @@ import static org.mockito.Mockito.when;
  */
 class PostgresIdempotencyStoreReserveRaceTest {
 
-    private final EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-1");
+    private final EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-1");
 
     @Test
     @SuppressWarnings({"unchecked", "rawtypes"})
