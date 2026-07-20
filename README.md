@@ -58,6 +58,100 @@ just overwrites state), or is a pure read.
 
 See `CONTEXT.md` for the full glossary and `docs/adr/` for the design rationale.
 
+### Request flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client
+    participant Filter as IdempotencyFilter
+    participant Interceptor as IdempotencyInterceptor
+    participant Registry as IdempotencyEngineRegistry
+    participant Engine as IdempotencyEngine
+    participant Store as IdempotencyStore
+    participant Handler as Controller Handler
+
+    Client->>Filter: HTTP request
+    Filter->>Filter: wrap request/response (buffer body)
+    Filter->>Interceptor: preHandle()
+
+    Interceptor->>Interceptor: resolve @Idempotent policy (store/ttl/onStoreFailure/whenInProgress/keyRequired)
+    Interceptor->>Interceptor: resolve raw key (header or fieldPath)
+
+    alt key missing & required
+        Interceptor-->>Client: 400 key_required
+    else key invalid (charset/length)
+        Interceptor-->>Client: 400 key_invalid
+    else key present & valid
+        Interceptor->>Interceptor: build EffectiveKey (method+path+principal+key)
+        Interceptor->>Interceptor: compute fingerprint (method+path+body)
+        Interceptor->>Registry: engine(store qualifier)
+        Registry-->>Interceptor: IdempotencyEngine
+
+        Interceptor->>Engine: before(key, fingerprint, lockTtl, onStoreFailure, whenInProgress, waitTimeout)
+        Engine->>Store: reserve(key, fingerprint, lockTtl)
+
+        alt store unavailable
+            Store-->>Engine: StoreUnavailableException
+            alt onStoreFailure=CLOSED
+                Engine-->>Interceptor: FailClosed
+                Interceptor-->>Client: 503 store_unavailable
+            else onStoreFailure=OPEN
+                Engine-->>Interceptor: ProceedUnprotected
+                Interceptor->>Handler: invoke (unprotected)
+                Handler-->>Client: original response
+            end
+        else RESERVED (fresh key)
+            Store-->>Engine: ReservationResult(RESERVED, fenceToken)
+            Engine-->>Interceptor: Proceed(key, fenceToken)
+            Interceptor->>Handler: invoke handler
+            Handler-->>Interceptor: response captured
+
+            alt 2xx response
+                Interceptor->>Engine: complete(key, fenceToken, response, ttl)
+                Engine->>Store: complete(key, fenceToken, response, ttl)
+                Interceptor-->>Client: original response
+            else non-2xx or exception thrown
+                Interceptor->>Engine: release(key, fenceToken)
+                Engine->>Store: release(key, fenceToken)
+                Interceptor-->>Client: original error response
+            end
+        else EXISTING record found
+            Store-->>Engine: ReservationResult(existing record)
+            alt fingerprint mismatch
+                Engine-->>Interceptor: Collision
+                Interceptor-->>Client: 422 collision
+            else existing.completed
+                Engine-->>Interceptor: Replay(cachedResponse) or Unavailable
+                alt response cached
+                    Interceptor-->>Client: 2xx replay (Idempotency-Replayed: true)
+                else response not replayable
+                    Interceptor-->>Client: 409 response_unavailable
+                end
+            else still in-progress, whenInProgress=REJECT
+                Engine-->>Interceptor: Reject(IN_PROGRESS, retryAfter)
+                Interceptor-->>Client: 409 in_progress + Retry-After
+            else still in-progress, whenInProgress=WAIT
+                Engine->>Store: await(key, waitTimeout, pollInterval, pollJitter)
+                Store-->>Engine: completed record / empty / still in-progress
+                alt primary completed
+                    Engine-->>Interceptor: Replay(cachedResponse) or Unavailable
+                    Interceptor-->>Client: 2xx replay or 409 response_unavailable
+                else primary released (error) mid-wait
+                    Engine-->>Interceptor: Reject(RELEASED, retryAfter)
+                    Interceptor-->>Client: 409 released + Retry-After
+                else waitTimeout elapsed
+                    Engine-->>Interceptor: Reject(TIMEOUT, retryAfter)
+                    Interceptor-->>Client: 409 timeout + Retry-After
+                end
+            end
+        end
+    end
+
+    Filter->>Filter: copy captured body to real response
+    Filter-->>Client: flush response
+```
+
 ## Install
 
 Group id `io.adzubla.blocks`, artifacts `blocks-idempotency-core`,
