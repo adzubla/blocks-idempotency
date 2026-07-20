@@ -1,12 +1,14 @@
- # PRD — Extending Idempotency to Messaging (JMS/RabbitMQ/Kafka)
+# PRD — Extending Idempotency to Messaging (JMS/RabbitMQ/Kafka)
 
 > Source: feasibility/design analysis of extending `blocks-idempotency-core`
 > (currently HTTP/Spring-MVC only) to message-consumer idempotency
 > (`@KafkaListener`/`@RabbitListener`/`@JmsListener` deduplication). Grounded in
 > direct inspection of `blocks-idempotency-core`, `-store-redis`, and
-> `-store-postgres` as of 2026-07-20. No corresponding discussion exists yet in
-> `CONTEXT.md` or `docs/adr/*.md` — this is new ground, not filling a
-> documented gap. Not yet committed for implementation.
+> `-store-postgres`, and sharpened via a `/grill-with-docs` interview session,
+> both as of 2026-07-20. See `docs/adr/0004-messaging-dedupe-only-v1-scope.md`
+> and `docs/adr/0005-messaging-wait-disabled.md` for the two decisions judged
+> hard-to-reverse/surprising enough to warrant a standalone ADR. Not yet
+> committed for implementation.
 
 ## Problem Statement
 
@@ -32,6 +34,10 @@ methods an HTTP request does today. The stores need no new implementation —
 Redis needs no changes at all; Postgres needs schema/field generalization
 only.
 
+**v1 scope is deliberately narrow**: dedupe-only (skip a duplicate delivery,
+nothing re-emitted), Kafka only, single module, `WAIT` concurrency mode
+disabled. See ADRs 0004/0005 for why.
+
 ### Reusable as-is
 
 - `engine/IdempotencyEngine.java`, `engine/EngineDecision.java`,
@@ -43,6 +49,8 @@ only.
 - `model/RecordState.java`, `model/ReservationResult.java`
 - `RedisIdempotencyStore` — keys opaquely off `EffectiveKey.digestBytes()`,
   never inspects fields individually
+- `IdempotencyEngine.complete(...)`'s signature, unchanged — see "Engine
+  stays unchanged" below
 
 ### HTTP-coupled, needs a message-oriented equivalent
 
@@ -53,110 +61,159 @@ only.
   has no listener analog. Becomes a Spring AOP `@Around` advice instead — the
   same mechanism `@Transactional` already uses on listener methods.
 - `response/ResponseCapture.java` / `ResponseReplayer.java` — bound to
-  `ContentCachingResponseWrapper`/`HttpServletResponse`.
+  `ContentCachingResponseWrapper`/`HttpServletResponse`. **Not needed at all
+  for v1**: since v1 is dedupe-only (no replay), there's nothing to capture
+  or replay — see "Dedupe-only v1 scope" below.
 - `key/EffectiveKeyFactory.java` + `key/HeaderKeyStrategy.java` — read off
-  `HttpServletRequest`; message headers are the direct equivalent source.
+  `HttpServletRequest`; message headers are the direct equivalent source
+  (Kafka `ConsumerRecord.headers()`).
 - The 6 `IdempotencyException` subtypes — carry `HttpStatus`, translated via
-  `@ControllerAdvice`.
+  `@ControllerAdvice`. Messaging replaces this with the action mapping below.
 - `config/IdempotencyAutoConfiguration.java` +
   `validation/IdempotentHandlerValidator.java` — Spring-MVC-specific
   (`FilterRegistrationBean`, `WebMvcConfigurer`, `RequestMappingHandlerMapping`).
+  The messaging equivalent also needs one extra rule the HTTP validator
+  doesn't have: rejecting `whenInProgress=WAIT` on a listener method at
+  startup (ADR 0005).
 
 ## Design Changes
 
-### 1. Generalize three model types in `core` (additively)
+### 1. Dedupe-only v1 scope (no response replay)
 
-Three types are HTTP-*named* but not HTTP-*shaped*:
+A duplicate delivery is acked and skipped; nothing is republished to a
+reply/output topic. See `docs/adr/0004-messaging-dedupe-only-v1-scope.md`
+for the full reasoning. This is a scope decision, not a limitation of the
+core — a later broker-specific extension can opt into real replay by giving
+`CachedResponse` genuine content, without touching the engine.
 
-| Type | Current shape | Generalization |
+### 2. Engine stays unchanged — the sentinel `CachedResponse`, and what it implies
+
+`IdempotencyEngine.complete(key, fenceToken, CachedResponse response, ttl)`
+keeps its exact signature. Messaging call sites always complete with an
+empty/sentinel `CachedResponse` (it already models "no body" via
+`hasBody()`).
+
+This has a non-obvious, broker-agnostic consequence worth documenting
+explicitly so it isn't "rediscovered" as a bug later:
+`IdempotencyEngine.decisionForCompleted()` only returns `Replay` when
+`response.hasBody()` is true; since messaging's sentinel is always bodyless,
+**every completed messaging duplicate resolves to `EngineDecision.Unavailable`,
+never `Replay`.** In HTTP, `Unavailable` is a terminal error (crash window,
+oversized body — mapped to a 409 the client shouldn't retry). In messaging,
+because of the sentinel choice above, `Unavailable` becomes **the ordinary,
+expected outcome for every routine duplicate skip** — not an error. See the
+action-mapping table below: it's mapped to ack-and-skip, the same action
+`Replay` would have gotten had dedupe-only not been the v1 scope.
+
+### 3. Generalize `EffectiveKey`/`Fingerprint`/Postgres schema: `route` + `handler`
+
+`CONTEXT.md`'s "endpoint" (HTTP method+path together, the operation
+identity) generalizes, for messaging, to two dimensions — not one, so two
+listeners sharing a destination stay isolated, mirroring how two HTTP routes
+never collide:
+
+| Type | Current shape | Generalized shape |
 |---|---|---|
-| `model/EffectiveKey` | `(method, path, principal, value)` | Neutral field names, e.g. `(scope1, scope2, principal, value)` — the same four dimensions cover `(destination/topic, listener-id, principal, key)` for messaging |
-| `fingerprint/Fingerprint.sha256(method, path, body)` | HTTP verb + URI + payload hash | Algorithm (SHA-256, NUL-joined, canonical-JSON body normalization) is already payload-agnostic — just a param rename |
-| `model/CachedResponse` | `(status, headers, body)` | Structurally "outcome + metadata + payload" already — reusable for the optional case of republishing a reply message |
+| `model/EffectiveKey` | `(method, path, principal, value)` | `(route, handler, principal, value)` — `route` = where it came in on (HTTP path, or message destination/topic); `handler` = which code processes it (HTTP method+controller, or listener id/consumer group) |
+| `fingerprint/Fingerprint.sha256(method, path, body)` | HTTP verb + URI + payload hash | `sha256(route, handler, body)` — algorithm (SHA-256, NUL-joined, canonical-JSON body normalization) is already payload-agnostic, only the param names change |
+| Postgres `idempotency_record` columns | `http_method, path, principal, idempotency_key, ...` | `route, handler, principal, idempotency_key, ...` — via a **V2 Flyway migration renaming the columns in place** (`ALTER TABLE ... RENAME COLUMN`), not additive parallel columns. Existing HTTP-only deployments must run the migration before upgrading; accepted since the columns' *meaning* doesn't change (an HTTP route+handler is still its method+path), only the name generalizes. |
 
-Do this **additively**: keep `EffectiveKeyFactory.create(HttpServletRequest,
-...)` and `HeaderKeyStrategy.resolve(HttpServletRequest, ...)` as HTTP-specific
-factory methods, rename only the underlying record field names, and add
-parallel factory methods (e.g. `EffectiveKeyFactory.create(String destination,
-String consumerId, String principal, String key)`) for messaging. Since
-`EffectiveKey` is normally obtained through factories rather than constructed
-ad hoc, this avoids breaking existing call sites.
+Done **additively** at the Java API level: `EffectiveKeyFactory.create(HttpServletRequest,
+...)` and `HeaderKeyStrategy.resolve(HttpServletRequest, ...)` stay as
+HTTP-specific factory methods; only the underlying record field names
+change, plus a parallel `EffectiveKeyFactory.create(String route, String
+handler, String principal, String key)`-shaped factory for messaging. Since
+`EffectiveKey` is normally obtained through factories rather than
+constructed ad hoc, this avoids breaking existing call sites.
 
-### 2. New adapter modules, mirroring the store-module split
+**Principal scope**: always `NO_PRINCIPAL` for v1 messaging — no servlet-
+principal equivalent exists for a message listener. A future need (e.g. a
+tenant-id message header) is an extension of `PrincipalClaimResolver`'s
+existing opaque-claim escape hatch resolving from message headers instead of
+`HttpServletRequest`, not a new concept.
 
-Mirror the existing `-store-redis`/`-store-postgres` pattern with
-`blocks-idempotency-messaging-kafka`, `-rabbit`, `-jms` (factoring out a shared
-`-messaging-core` once it's clear what's genuinely common). Shared across all
-three brokers:
+### 4. New adapter module: `blocks-idempotency-messaging-kafka`
 
-- **Wrapping mechanism** — all three integrate via Spring-managed beans with
-  annotated listener methods, so one Spring AOP `@Around` advice pattern
-  replaces `IdempotencyFilter`/`IdempotencyInterceptor` uniformly.
-- **Startup validation** — an `IdempotentHandlerValidator`-equivalent scanning
-  for `@Idempotent` + `@XListener` methods (mechanism differs per broker:
-  `KafkaListenerEndpointRegistry` vs. reflecting Rabbit/JMS listener beans).
+Single module for v1 — no `-messaging-core` split yet. Extract one once
+RabbitMQ/JMS (Phase 3) reveal what's actually broker-agnostic vs.
+Kafka-specific; guessing the boundary now, with only one data point, isn't
+worth it. `-rabbit`/`-jms` remain the Phase 3 destination, not v1 targets.
 
-Broker-specific: key/header extraction (`ConsumerRecord.headers()` vs. AMQP
-`MessageProperties` vs. JMS `Message.getStringProperty`), and ack/nack/dead-letter
-semantics, since each broker has a different redelivery model.
+What the module needs to build, mirroring the existing `-store-redis`/
+`-store-postgres` pattern of a thin adapter over the shared core:
 
-### 3. Map `RejectReason` to consumer actions, not HTTP status
+- **Wrapping mechanism** — a Spring AOP `@Around` advice (`MethodInterceptor`)
+  around `@Idempotent` + `@KafkaListener` methods, the same mechanism
+  `@Transactional` already uses on listener methods. No buffered-request
+  wrapping needed — the message payload is already a plain method argument.
+- **Key extraction** — from `ConsumerRecord.headers()` (header strategy) or
+  the deserialized payload (body-field strategy, reusing
+  `BodyFieldKeyStrategy` unchanged).
+- **Startup validation** — a `KafkaListenerEndpointRegistry`-driven scan for
+  `@Idempotent` + `@KafkaListener` methods, mirroring
+  `IdempotentHandlerValidator`'s key-strategy/ttl/store checks, plus the
+  extra WAIT-rejection rule from ADR 0005.
 
-`RejectReason` already lives in the framework-agnostic `engine/` package — no
-rework needed there, only the translation layer. Instead of
-`IdempotencyExceptionHandler` mapping a reason to an HTTP status +
-`Idempotency-Reject-Reason` header, a messaging adapter maps it to one of:
+### 5. `RejectReason` → consumer action
 
-- **ack-and-skip** — duplicate, already completed
-- **nack-with-backoff/retry** — transient store failure
-- **dead-letter** — validation failure (missing/invalid key, or a fingerprint
-  collision indicating a poison message)
+`RejectReason` already lives in the framework-agnostic `engine/` package —
+no rework needed there, only the translation layer:
 
-**Policy nuance**: `whenInProgress=WAIT` blocks the calling thread until the
-in-flight duplicate resolves. For an HTTP request thread that's locally
-contained; for a listener container thread it risks stalling partition
-consumption or triggering a consumer-group rebalance if the wait exceeds
-session/poll timeouts. Recommend **REJECT-style behavior (ack-and-skip or
-nack-with-backoff) as the default for messaging**, keeping `WAIT` available as
-an opt-in for short, bounded processing times.
+| Outcome | HTTP today | Messaging action | Why |
+|---|---|---|---|
+| `IN_PROGRESS` (REJECT) | 409 + Retry-After | **ack-and-skip** | The other in-flight delivery is already handling the effect; nacking would just cause a redundant redelivery loop. Safe because the primary's own message is natively redelivered by the broker if it fails. |
+| `EngineDecision.Unavailable` (every completed dupe — see §2) | 409 terminal | **ack-and-skip** | Routine outcome in messaging, not an error — see §2. |
+| `COLLISION` (fingerprint mismatch) | 422 | **dead-letter** | A key reused with a different payload is a producer bug or poison message — no consumer-side retry resolves it. |
+| `KEY_REQUIRED` / `KEY_INVALID` | 400 | **dead-letter** | A structurally bad message; broker-native redelivery can't fix a message that will never carry a valid key. |
+| `STORE_UNAVAILABLE` (`onStoreFailure=CLOSED`) | 503 | **nack-with-backoff** | Transient infrastructure trouble, not a poison message (dead-letter would be wrong) and it's unknown whether the effect already ran (ack-and-skip would risk silently losing the message). |
+| `RELEASED` / `TIMEOUT` (WAIT outcomes) | 409 + Retry-After | **N/A** | `whenInProgress=WAIT` is disabled for v1 — see §6 / ADR 0005. |
 
-### 4. Store implications
+### 6. `whenInProgress=WAIT` disabled for v1
+
+Full reasoning in `docs/adr/0005-messaging-wait-disabled.md`. Summary:
+enforced via a startup validation rule (same shape as
+`IdempotentHandlerValidator`'s existing rules) rather than silent coercion.
+Kept out because blocking a Kafka listener container thread inside
+`store.await()` risks missing `max.poll.interval.ms` and triggering a
+partition rebalance — a worse failure mode than HTTP thread-pool pressure —
+and is arguably redundant for messaging specifically, since a failed
+primary's own message is natively redelivered by the broker at-least-once
+(unlike HTTP, which has no such mechanism). Trade-off accepted: loses WAIT's
+narrow correctness fallback, and is a transport-conditional exception to
+`CONTEXT.md`'s "single mechanism, same policy" principle.
+
+### 7. Store implications
 
 - **Redis**: no changes needed.
-- **Postgres**: schema (`http_method, path, principal, idempotency_key`, PK on
-  those four) needs renaming/generalizing — a Flyway migration renaming
-  columns is preferable to a parallel table, to avoid duplicating the store
-  implementation. The thread-bound-transaction constraint (`reserve()` opens a
-  transaction that `complete()`/`release()` must finish on the same thread) is
-  **not a new problem** — it already excludes WebFlux/async servlet handlers
-  per the store's own javadoc, and a standard synchronous, single-container-thread
-  `@KafkaListener`/`@RabbitListener`/`@JmsListener` satisfies the same
-  assumption a synchronous MVC controller does today. Document this as a
-  carried-over constraint; it would still break under reactive consumers
-  (Reactor Kafka, deferred manual-ack to another thread).
+- **Postgres**: schema generalized per §3. The thread-bound-transaction
+  constraint (`reserve()` opens a transaction that `complete()`/`release()`
+  must finish on the same thread) is **not a new problem** — it already
+  excludes WebFlux/async servlet handlers per the store's own javadoc, and a
+  standard synchronous, single-container-thread `@KafkaListener` satisfies
+  the same assumption a synchronous MVC controller does today. Document this
+  as a carried-over constraint; it would still break under reactive
+  consumers (Reactor Kafka, deferred manual-ack to another thread).
 
 ## Recommended Phased Build Order
 
-1. **Generalize `core`** — rename `EffectiveKey`/`Fingerprint`/`CachedResponse`
-   fields additively; extract a formal key-strategy SPI parallel to today's
-   header/body strategies. No new modules yet.
-2. **One broker adapter end-to-end as proof of concept** — likely Kafka
-   (largest ecosystem overlap, clean `ConsumerRecord.headers()` model),
-   including the Postgres migration and validating the AOP advice mechanism
-   against real listener-container behavior (rebalance/redelivery edge cases).
+1. **Generalize `core`** — rename `EffectiveKey`/`Fingerprint` fields and the
+   Postgres schema per §3, additively. No new modules yet.
+2. **`blocks-idempotency-messaging-kafka` end-to-end**, including the
+   Postgres V2 migration, the AOP advice mechanism, the WAIT-rejection
+   startup rule, and the action-mapping table in §5 — validated against real
+   listener-container behavior (rebalance/redelivery edge cases).
 3. **Extend the pattern to RabbitMQ and JMS**, factoring out whatever proves
-   genuinely broker-agnostic from the Kafka work into a shared messaging-core
-   module.
+   genuinely broker-agnostic from the Kafka work into a shared
+   `-messaging-core` module at that point.
 
 ## Critical Files (for whichever phase is picked up next)
 
 - `blocks-idempotency-core/src/main/java/io/adzubla/blocks/idempotency/engine/IdempotencyEngine.java` — the reusable orchestration core
-- `blocks-idempotency-core/src/main/java/io/adzubla/blocks/idempotency/model/EffectiveKey.java` — field-naming generalization
-- `blocks-idempotency-core/src/main/java/io/adzubla/blocks/idempotency/model/CachedResponse.java` — outcome/payload generalization
-- `blocks-idempotency-core/src/main/java/io/adzubla/blocks/idempotency/fingerprint/Fingerprint.java` — param renaming
+- `blocks-idempotency-core/src/main/java/io/adzubla/blocks/idempotency/model/EffectiveKey.java` — `route`/`handler` field rename
+- `blocks-idempotency-core/src/main/java/io/adzubla/blocks/idempotency/fingerprint/Fingerprint.java` — param rename
 - `blocks-idempotency-core/src/main/java/io/adzubla/blocks/idempotency/web/IdempotencyInterceptor.java` — reference for the AOP advice this becomes
 - `blocks-idempotency-core/src/main/java/io/adzubla/blocks/idempotency/config/IdempotencyAutoConfiguration.java` — reference for the wiring a messaging adapter needs to replace
-- `blocks-idempotency-store-postgres/src/main/resources/db/migration/V1__idempotency_record.sql` — schema to generalize
+- `blocks-idempotency-store-postgres/src/main/resources/db/migration/V1__idempotency_record.sql` — schema to generalize via a new V2 migration
 
 ## Verification (once a phase is picked up)
 
@@ -164,9 +221,12 @@ an opt-in for short, bounded processing times.
   — the shared `IdempotencyStoreContractTest` suite must still pass unchanged
   against `InMemoryIdempotencyStore` after the field rename, proving it was
   additive.
-- **Phase 2** (Kafka POC): an embedded-Kafka integration test exercising a
+- **Phase 2** (Kafka module): an embedded-Kafka integration test exercising a
   duplicate delivery (same key, same/different payload) against a real
-  `@KafkaListener` + `@Idempotent`, asserting ack-and-skip / dead-letter /
-  collision behavior, plus a Postgres integration test confirming the renamed
-  schema and the thread-bound transaction join still work end-to-end via
-  `mvn test -pl blocks-idempotency-store-postgres -am`.
+  `@KafkaListener` + `@Idempotent`, asserting the full action-mapping table
+  in §5 (ack-and-skip / dead-letter / nack-with-backoff), plus a Postgres
+  integration test confirming the renamed schema and the thread-bound
+  transaction join still work end-to-end via `mvn test -pl
+  blocks-idempotency-store-postgres -am`. A startup-validation test
+  confirming `whenInProgress=WAIT` on a `@KafkaListener` method fails fast
+  (ADR 0005).

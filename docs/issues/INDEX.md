@@ -72,3 +72,24 @@ test's `@Disabled` reproduces its failure. All slices are **AFK**.
 | [031](031-default-await-clock-and-initial-check.md) | Default `await()` uses wall-clock (ignores injected `Clock`) and sleeps before first `find()` | AFK | — |
 | [032](032-redis-slow-primary-loses-response.md) | Redis silently drops a slow primary's response once `lock-ttl` passes (documented best-effort limitation) | AFK | — |
 | [033](033-postgres-dangling-reservation-scope.md) | Harden against a dangling Postgres reservation scope surviving thread reuse (defense-in-depth) | AFK | — |
+
+## Batch 5 — messaging extension: core refactor + Kafka (2026-07-20)
+
+Tracer-bullet slices from `docs/prd/messaging-extension.md`'s Phase 1/Phase 2
+build order, sharpened via a `/grill-with-docs` session — see
+[ADR 0004](../adr/0004-messaging-dedupe-only-v1-scope.md) (dedupe-only v1
+scope) and [ADR 0005](../adr/0005-messaging-wait-disabled.md) (`WAIT`
+disabled for messaging). RabbitMQ and JMS (PRD Phase 3) are **out of scope**
+for this batch. All slices are **AFK**.
+
+| # | Slice | Blocked by |
+|---|-------|-----------|
+| [034](034-messaging-core-route-handler-refactor.md) | Core refactor: route/handler generalization + messaging-ready primitives | — |
+| [035](035-kafka-happy-path-dedupe-skip.md) | Kafka happy-path dedupe-skip (foundation) | 034 |
+| [036](036-kafka-collision-dead-letter.md) | Kafka collision → dead-letter | 035 |
+| [037](037-kafka-concurrent-duplicate-ack-skip.md) | Kafka concurrent in-progress duplicate → ack-and-skip | 035 |
+| [038](038-kafka-store-failure-posture.md) | Kafka store-failure posture → nack-with-backoff / proceed unprotected | 035 |
+| [039](039-kafka-missing-invalid-key-dead-letter.md) | Kafka missing/invalid key → dead-letter | 035 |
+| [040](040-kafka-startup-validation-wait-disabled.md) | Kafka startup validation: reject `whenInProgress=WAIT` | 035 |
+| [041](041-kafka-redis-store-end-to-end.md) | Redis store wired into the Kafka module end-to-end | 035 |
+| [042](042-kafka-postgres-store-end-to-end.md) | Postgres store wired into the Kafka module end-to-end | 035, 034 |
