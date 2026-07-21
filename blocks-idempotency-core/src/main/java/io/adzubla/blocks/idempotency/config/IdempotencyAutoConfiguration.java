@@ -8,43 +8,38 @@ import io.adzubla.blocks.idempotency.metrics.MicrometerIdempotencyMetrics;
 import io.adzubla.blocks.idempotency.metrics.NoOpIdempotencyMetrics;
 import io.adzubla.blocks.idempotency.store.IdempotencyStore;
 import io.adzubla.blocks.idempotency.store.IdempotencyStoreQualifiers;
-import io.adzubla.blocks.idempotency.validation.IdempotentHandlerValidator;
-import io.adzubla.blocks.idempotency.web.IdempotencyExceptionHandler;
-import io.adzubla.blocks.idempotency.web.IdempotencyFilter;
-import io.adzubla.blocks.idempotency.web.IdempotencyInterceptor;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.core.Ordered;
-import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
-import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
-import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
 /**
- * Core auto-configuration: binds {@link IdempotencyProperties}, registers the
- * {@link IdempotentHandlerValidator} (Slice 010 - fails startup fast on a
- * misconfigured {@code @Idempotent} handler, including one whose store
- * qualifier resolves to no bean at all), and, once at least one {@link
- * IdempotencyStore} bean is present (provided by one or more store modules,
- * or by the application itself), wires the {@link IdempotencyFilter}, an
- * {@link IdempotencyEngineRegistry} (one engine per store qualifier),
- * {@link IdempotencyInterceptor}, and the default {@link
- * IdempotencyExceptionHandler} that translates the interceptor's thrown
- * {@code IdempotencyException}s into responses (an application's own {@code
- * @ControllerAdvice} can override any of them by handling the same exception
- * type). It deliberately does not provide a default {@code IdempotencyStore}
- * - a store is chosen per endpoint by qualifier and provided by a store
- * module; multiple store modules (e.g. Redis and Postgres) may be on the
- * classpath at once, each endpoint routed to its own by {@code
- * IdempotencyEngineRegistry}.
+ * Transport-neutral auto-configuration: binds {@link IdempotencyProperties}
+ * and, once at least one {@link IdempotencyStore} bean is present (provided
+ * by one or more store modules, or by the application itself), wires an
+ * {@link IdempotencyEngineRegistry} (one engine per store qualifier) and the
+ * default {@link PrincipalClaimResolver}. It deliberately does not provide a
+ * default {@code IdempotencyStore} - a store is chosen per endpoint by
+ * qualifier and provided by a store module; multiple store modules (e.g.
+ * Redis and Postgres) may be on the classpath at once, each endpoint routed
+ * to its own by {@code IdempotencyEngineRegistry}.
+ *
+ * <p>Not conditional on a web application: this bean set (engine, metrics,
+ * principal resolver) is used by every transport adapter (HTTP via {@code
+ * blocks-idempotency-web}, and future messaging modules), not just servlet
+ * apps. The class keeps its name and package so
+ * {@code RedisIdempotencyStoreAutoConfiguration}/{@code
+ * PostgresIdempotencyStoreAutoConfiguration}'s load-bearing {@code
+ * @AutoConfigureBefore(IdempotencyAutoConfiguration.class)} ordering, and this
+ * module's own {@code AutoConfiguration.imports}, stay valid untouched. A
+ * transport adapter's own auto-configuration (e.g. {@code
+ * IdempotencyWebAutoConfiguration} in {@code blocks-idempotency-web}) depends
+ * on the {@link IdempotencyEngineRegistry} bean registered here via the same
+ * {@code @AutoConfigureAfter}/{@code @ConditionalOnBean} technique.
  *
  * <p>{@link IdempotencyMetrics} (Slice 011) resolves to {@link
  * MicrometerIdempotencyMetrics} when {@code idempotency.metrics.enabled}
@@ -52,75 +47,34 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
  * otherwise to {@link NoOpIdempotencyMetrics}.
  */
 @AutoConfiguration
-@ConditionalOnWebApplication
+@ConditionalOnBean(IdempotencyStore.class)
 @EnableConfigurationProperties(IdempotencyProperties.class)
 public class IdempotencyAutoConfiguration {
 
     @Bean
-    public FilterRegistrationBean<IdempotencyFilter> idempotencyFilterRegistration() {
-        FilterRegistrationBean<IdempotencyFilter> registration = new FilterRegistrationBean<>(new IdempotencyFilter());
-        registration.addUrlPatterns("/*");
-        registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
-        return registration;
+    @ConditionalOnProperty(prefix = "idempotency.metrics", name = "enabled", havingValue = "true", matchIfMissing = true)
+    @ConditionalOnBean(MeterRegistry.class)
+    @ConditionalOnMissingBean(IdempotencyMetrics.class)
+    public IdempotencyMetrics micrometerIdempotencyMetrics(MeterRegistry registry) {
+        return new MicrometerIdempotencyMetrics(registry);
     }
 
     @Bean
-    public IdempotentHandlerValidator idempotentHandlerValidator(ConfigurableListableBeanFactory beanFactory,
-            RequestMappingHandlerMapping requestMappingHandlerMapping, IdempotencyProperties properties) {
-        return new IdempotentHandlerValidator(beanFactory, requestMappingHandlerMapping, properties);
+    @ConditionalOnMissingBean(IdempotencyMetrics.class)
+    public IdempotencyMetrics noOpIdempotencyMetrics() {
+        return NoOpIdempotencyMetrics.INSTANCE;
     }
 
-    @Configuration(proxyBeanMethods = false)
-    @ConditionalOnBean(IdempotencyStore.class)
-    static class EngineConfiguration {
+    @Bean
+    public IdempotencyEngineRegistry idempotencyEngineRegistry(ConfigurableListableBeanFactory beanFactory, IdempotencyProperties properties,
+            IdempotencyMetrics metrics) {
+        return new IdempotencyEngineRegistry(IdempotencyStoreQualifiers.byQualifier(beanFactory), properties.getPollInterval(),
+                properties.getPollJitter(), metrics);
+    }
 
-        @Bean
-        @ConditionalOnProperty(prefix = "idempotency.metrics", name = "enabled", havingValue = "true", matchIfMissing = true)
-        @ConditionalOnBean(MeterRegistry.class)
-        @ConditionalOnMissingBean(IdempotencyMetrics.class)
-        public IdempotencyMetrics micrometerIdempotencyMetrics(MeterRegistry registry) {
-            return new MicrometerIdempotencyMetrics(registry);
-        }
-
-        @Bean
-        @ConditionalOnMissingBean(IdempotencyMetrics.class)
-        public IdempotencyMetrics noOpIdempotencyMetrics() {
-            return NoOpIdempotencyMetrics.INSTANCE;
-        }
-
-        @Bean
-        public IdempotencyEngineRegistry idempotencyEngineRegistry(ConfigurableListableBeanFactory beanFactory, IdempotencyProperties properties,
-                IdempotencyMetrics metrics) {
-            return new IdempotencyEngineRegistry(IdempotencyStoreQualifiers.byQualifier(beanFactory), properties.getPollInterval(),
-                    properties.getPollJitter(), metrics);
-        }
-
-        @Bean
-        @ConditionalOnMissingBean
-        public PrincipalClaimResolver principalClaimResolver() {
-            return new DefaultPrincipalClaimResolver();
-        }
-
-        @Bean
-        public IdempotencyInterceptor idempotencyInterceptor(IdempotencyEngineRegistry engineRegistry, IdempotencyProperties properties,
-                PrincipalClaimResolver principalClaimResolver) {
-            return new IdempotencyInterceptor(engineRegistry, properties, principalClaimResolver);
-        }
-
-        @Bean
-        @ConditionalOnMissingBean(IdempotencyExceptionHandler.class)
-        public IdempotencyExceptionHandler idempotencyExceptionHandler() {
-            return new IdempotencyExceptionHandler();
-        }
-
-        @Bean
-        public WebMvcConfigurer idempotencyWebMvcConfigurer(IdempotencyInterceptor interceptor) {
-            return new WebMvcConfigurer() {
-                @Override
-                public void addInterceptors(InterceptorRegistry registry) {
-                    registry.addInterceptor(interceptor);
-                }
-            };
-        }
+    @Bean
+    @ConditionalOnMissingBean
+    public PrincipalClaimResolver principalClaimResolver() {
+        return new DefaultPrincipalClaimResolver();
     }
 }

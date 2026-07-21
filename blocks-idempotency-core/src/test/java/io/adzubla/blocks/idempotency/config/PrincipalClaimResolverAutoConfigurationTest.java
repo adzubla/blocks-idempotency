@@ -6,7 +6,7 @@ import io.adzubla.blocks.idempotency.store.IdempotencyStore;
 import io.adzubla.blocks.idempotency.store.InMemoryIdempotencyStore;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class PrincipalClaimResolverAutoConfigurationTest {
 
-    private final WebApplicationContextRunner runner = new WebApplicationContextRunner()
+    private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withUserConfiguration(StoreConfig.class);
 
     @Test

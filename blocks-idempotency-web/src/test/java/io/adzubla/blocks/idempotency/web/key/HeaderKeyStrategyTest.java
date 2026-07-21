@@ -1,4 +1,4 @@
-package io.adzubla.blocks.idempotency.key;
+package io.adzubla.blocks.idempotency.web.key;
 
 import io.adzubla.blocks.idempotency.annotation.Idempotent;
 import org.junit.jupiter.api.Test;

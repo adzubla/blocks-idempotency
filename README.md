@@ -155,14 +155,24 @@ sequenceDiagram
 ## Install
 
 Group id `io.adzubla.blocks`, artifacts `blocks-idempotency-core`,
-`blocks-idempotency-store-redis`, `blocks-idempotency-store-postgres`. Add `core`
-plus whichever store module(s) your endpoints use — each store is an optional
-module so you don't pull in Redis or JDBC you don't need.
+`blocks-idempotency-web`, `blocks-idempotency-store-redis`,
+`blocks-idempotency-store-postgres`. `core` is transport-neutral (the
+`@Idempotent` annotation, policy engine, and `IdempotencyStore` SPI); `web`
+is the Spring MVC/Servlet integration (filter, interceptor, startup
+validation, exception handling) that makes `@Idempotent` actually protect an
+HTTP endpoint. Add `core` + `web` plus whichever store module(s) your
+endpoints use — each store is an optional module so you don't pull in Redis
+or JDBC you don't need.
 
 ```xml
 <dependency>
     <groupId>io.adzubla.blocks</groupId>
     <artifactId>blocks-idempotency-core</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+</dependency>
+<dependency>
+    <groupId>io.adzubla.blocks</groupId>
+    <artifactId>blocks-idempotency-web</artifactId>
     <version>0.1.0-SNAPSHOT</version>
 </dependency>
 <dependency>

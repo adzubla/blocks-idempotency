@@ -7,8 +7,6 @@ import io.adzubla.blocks.idempotency.engine.IdempotencyEngine;
 import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
 import io.adzubla.blocks.idempotency.fingerprint.Fingerprint;
 import io.adzubla.blocks.idempotency.key.BodyFieldKeyStrategy;
-import io.adzubla.blocks.idempotency.key.EffectiveKeyFactory;
-import io.adzubla.blocks.idempotency.key.HeaderKeyStrategy;
 import io.adzubla.blocks.idempotency.key.KeyFormat;
 import io.adzubla.blocks.idempotency.key.PrincipalClaimResolver;
 import io.adzubla.blocks.idempotency.model.CachedResponse;
@@ -17,6 +15,8 @@ import io.adzubla.blocks.idempotency.policy.IdempotencyPolicy;
 import io.adzubla.blocks.idempotency.policy.PolicyResolver;
 import io.adzubla.blocks.idempotency.response.ResponseCapture;
 import io.adzubla.blocks.idempotency.response.ResponseReplayer;
+import io.adzubla.blocks.idempotency.web.key.HeaderKeyStrategy;
+import io.adzubla.blocks.idempotency.web.key.HttpEffectiveKeyFactory;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
@@ -99,7 +99,7 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
             throw new IdempotencyKeyInvalidException();
         }
 
-        EffectiveKey key = EffectiveKeyFactory.create(request, rawKey.get(), properties.getScope().isPrincipalEnabled(),
+        EffectiveKey key = HttpEffectiveKeyFactory.create(request, rawKey.get(), properties.getScope().isPrincipalEnabled(),
                 properties.getScope().getPrincipalClaim(), principalClaimResolver);
         String fingerprint = Fingerprint.sha256(key.route(), key.handler(), body);
 

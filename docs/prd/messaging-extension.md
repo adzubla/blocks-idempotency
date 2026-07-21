@@ -64,17 +64,20 @@ disabled. See ADRs 0004/0005 for why.
   `ContentCachingResponseWrapper`/`HttpServletResponse`. **Not needed at all
   for v1**: since v1 is dedupe-only (no replay), there's nothing to capture
   or replay — see "Dedupe-only v1 scope" below.
-- `key/EffectiveKeyFactory.java` + `key/HeaderKeyStrategy.java` — read off
-  `HttpServletRequest`; message headers are the direct equivalent source
-  (Kafka `ConsumerRecord.headers()`).
+- `web/key/HttpEffectiveKeyFactory.java` + `web/key/HeaderKeyStrategy.java`
+  (in `blocks-idempotency-web`, per ADR 0006) — read off `HttpServletRequest`;
+  message headers are the direct equivalent source (Kafka
+  `ConsumerRecord.headers()`). `key/EffectiveKeyFactory.java` itself (in
+  `blocks-idempotency-core`) is **already** the transport-neutral
+  construction seam a messaging adapter uses — see §3.
 - The 6 `IdempotencyException` subtypes — carry `HttpStatus`, translated via
   `@ControllerAdvice`. Messaging replaces this with the action mapping below.
-- `config/IdempotencyAutoConfiguration.java` +
-  `validation/IdempotentHandlerValidator.java` — Spring-MVC-specific
-  (`FilterRegistrationBean`, `WebMvcConfigurer`, `RequestMappingHandlerMapping`).
-  The messaging equivalent also needs one extra rule the HTTP validator
-  doesn't have: rejecting `whenInProgress=WAIT` on a listener method at
-  startup (ADR 0005).
+- `web/config/IdempotencyWebAutoConfiguration.java` +
+  `validation/IdempotentHandlerValidator.java` (in `blocks-idempotency-web`)
+  — Spring-MVC-specific (`FilterRegistrationBean`, `WebMvcConfigurer`,
+  `RequestMappingHandlerMapping`). The messaging equivalent also needs one
+  extra rule the HTTP validator doesn't have: rejecting `whenInProgress=WAIT`
+  on a listener method at startup (ADR 0005).
 
 ## Design Changes
 
@@ -105,26 +108,28 @@ expected outcome for every routine duplicate skip** — not an error. See the
 action-mapping table below: it's mapped to ack-and-skip, the same action
 `Replay` would have gotten had dedupe-only not been the v1 scope.
 
-### 3. Generalize `EffectiveKey`/`Fingerprint`/Postgres schema: `route` + `handler`
+### 3. Generalize `EffectiveKey`/`Fingerprint`/Postgres schema: `route` + `handler` (done — Slice 034)
 
 `CONTEXT.md`'s "endpoint" (HTTP method+path together, the operation
 identity) generalizes, for messaging, to two dimensions — not one, so two
 listeners sharing a destination stay isolated, mirroring how two HTTP routes
-never collide:
+never collide. Completed by Slice 034:
 
-| Type | Current shape | Generalized shape |
+| Type | Was | Now |
 |---|---|---|
 | `model/EffectiveKey` | `(method, path, principal, value)` | `(route, handler, principal, value)` — `route` = where it came in on (HTTP path, or message destination/topic); `handler` = which code processes it (HTTP method+controller, or listener id/consumer group) |
-| `fingerprint/Fingerprint.sha256(method, path, body)` | HTTP verb + URI + payload hash | `sha256(route, handler, body)` — algorithm (SHA-256, NUL-joined, canonical-JSON body normalization) is already payload-agnostic, only the param names change |
-| Postgres `idempotency_record` columns | `http_method, path, principal, idempotency_key, ...` | `route, handler, principal, idempotency_key, ...` — via a **V2 Flyway migration renaming the columns in place** (`ALTER TABLE ... RENAME COLUMN`), not additive parallel columns. Existing HTTP-only deployments must run the migration before upgrading; accepted since the columns' *meaning* doesn't change (an HTTP route+handler is still its method+path), only the name generalizes. |
+| `fingerprint/Fingerprint.sha256(method, path, body)` | HTTP verb + URI + payload hash | `sha256(route, handler, body)` — algorithm (SHA-256, NUL-joined, canonical-JSON body normalization) is already payload-agnostic, only the param names changed |
+| Postgres `idempotency_record` columns | `http_method, path, principal, idempotency_key, ...` | `route, handler, principal, idempotency_key, ...` — edited directly into `V1__idempotency_record.sql` (no V2 migration; the library was unreleased at the time, so there were no deployments to migrate through) |
 
-Done **additively** at the Java API level: `EffectiveKeyFactory.create(HttpServletRequest,
-...)` and `HeaderKeyStrategy.resolve(HttpServletRequest, ...)` stay as
-HTTP-specific factory methods; only the underlying record field names
-change, plus a parallel `EffectiveKeyFactory.create(String route, String
-handler, String principal, String key)`-shaped factory for messaging. Since
-`EffectiveKey` is normally obtained through factories rather than
-constructed ad hoc, this avoids breaking existing call sites.
+`key/EffectiveKeyFactory.create(String route, String handler, String
+principal, String value)` (in `blocks-idempotency-core`) is the resulting
+transport-neutral construction seam. The subsequent module split (ADR 0006)
+moved the `HttpServletRequest`-reading half out entirely, into
+`web/key/HttpEffectiveKeyFactory.create(HttpServletRequest, ...)` and
+`web/key/HeaderKeyStrategy.resolve(HttpServletRequest, ...)` (both in
+`blocks-idempotency-web`) — both delegate to core's neutral factory rather
+than constructing `EffectiveKey` directly, so a future messaging module's
+own key resolver should do the same.
 
 **Principal scope**: always `NO_PRINCIPAL` for v1 messaging — no servlet-
 principal equivalent exists for a message listener. A future need (e.g. a
@@ -196,12 +201,20 @@ narrow correctness fallback, and is a transport-conditional exception to
 
 ## Recommended Phased Build Order
 
-1. **Generalize `core`** — rename `EffectiveKey`/`Fingerprint` fields and the
-   Postgres schema per §3, additively. No new modules yet.
-2. **`blocks-idempotency-messaging-kafka` end-to-end**, including the
-   Postgres V2 migration, the AOP advice mechanism, the WAIT-rejection
-   startup rule, and the action-mapping table in §5 — validated against real
-   listener-container behavior (rebalance/redelivery edge cases).
+1. ~~**Generalize `core`** — rename `EffectiveKey`/`Fingerprint` fields and
+   the Postgres schema per §3, additively.~~ **Done (Slice 034).** A
+   follow-on structural step also happened since: `core` is now genuinely
+   transport-neutral end to end — HTTP integration moved to a new
+   `blocks-idempotency-web` module (ADR 0006), so a future
+   `blocks-idempotency-messaging-kafka` module depends on `core` alone, the
+   same way `blocks-idempotency-web`/`-store-redis`/`-store-postgres` do.
+2. **`blocks-idempotency-messaging-kafka` end-to-end**, including the AOP
+   advice mechanism, the WAIT-rejection startup rule, and the
+   action-mapping table in §5 — validated against real listener-container
+   behavior (rebalance/redelivery edge cases). Should mirror
+   `blocks-idempotency-web`'s `@AutoConfigureAfter(IdempotencyAutoConfiguration.class)`
+   + `@ConditionalOnBean(IdempotencyEngineRegistry.class)` auto-configuration
+   ordering pattern (ADR 0006) rather than inventing a new one.
 3. **Extend the pattern to RabbitMQ and JMS**, factoring out whatever proves
    genuinely broker-agnostic from the Kafka work into a shared
    `-messaging-core` module at that point.
@@ -209,11 +222,11 @@ narrow correctness fallback, and is a transport-conditional exception to
 ## Critical Files (for whichever phase is picked up next)
 
 - `blocks-idempotency-core/src/main/java/io/adzubla/blocks/idempotency/engine/IdempotencyEngine.java` — the reusable orchestration core
-- `blocks-idempotency-core/src/main/java/io/adzubla/blocks/idempotency/model/EffectiveKey.java` — `route`/`handler` field rename
-- `blocks-idempotency-core/src/main/java/io/adzubla/blocks/idempotency/fingerprint/Fingerprint.java` — param rename
-- `blocks-idempotency-core/src/main/java/io/adzubla/blocks/idempotency/web/IdempotencyInterceptor.java` — reference for the AOP advice this becomes
-- `blocks-idempotency-core/src/main/java/io/adzubla/blocks/idempotency/config/IdempotencyAutoConfiguration.java` — reference for the wiring a messaging adapter needs to replace
-- `blocks-idempotency-store-postgres/src/main/resources/db/migration/V1__idempotency_record.sql` — schema to generalize via a new V2 migration
+- `blocks-idempotency-core/src/main/java/io/adzubla/blocks/idempotency/model/EffectiveKey.java` — the `route`/`handler` shape (Slice 034)
+- `blocks-idempotency-core/src/main/java/io/adzubla/blocks/idempotency/key/EffectiveKeyFactory.java` — the transport-neutral construction seam to reuse
+- `blocks-idempotency-web/src/main/java/io/adzubla/blocks/idempotency/web/IdempotencyInterceptor.java` — reference for the AOP advice this becomes
+- `blocks-idempotency-web/src/main/java/io/adzubla/blocks/idempotency/web/config/IdempotencyWebAutoConfiguration.java` — reference for the wiring pattern (auto-configuration ordering) a messaging adapter should replicate
+- `blocks-idempotency-store-postgres/src/main/resources/db/migration/V1__idempotency_record.sql` — already generalized (Slice 034), no further schema change expected for Kafka
 
 ## Verification (once a phase is picked up)
 
