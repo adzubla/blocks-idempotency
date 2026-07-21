@@ -37,6 +37,7 @@
         <module>blocks-idempotency-web</module>
         <module>blocks-idempotency-store-redis</module>
         <module>blocks-idempotency-store-postgres</module>
+        <module>blocks-idempotency-messaging-kafka</module>
     </modules>
 
     <dependencyManagement>
