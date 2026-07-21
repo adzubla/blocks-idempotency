@@ -9,10 +9,9 @@ import org.springframework.kafka.core.KafkaTemplate;
  * suffix, {@code idempotency.kafka.dead-letter-suffix}, default {@code
  * ".DLT"} - the same convention Spring Kafka's own {@code
  * DeadLetterPublishingRecoverer} defaults to) instead of invoking the
- * listener - a terminal case from the PRD §5 action-mapping table (currently
- * just collision, Slice 036; a future slice may route missing/invalid-key
- * deliveries through the same publisher) where no consumer-side retry can
- * resolve the delivery.
+ * listener - the terminal cases from the PRD §5 action-mapping table
+ * (collision, Slice 036; missing/invalid key, Slice 039) where no
+ * consumer-side retry can resolve the delivery.
  *
  * <p>Holds the application's {@link KafkaTemplate} as a raw type
  * deliberately: an application's own template is typically parameterized to

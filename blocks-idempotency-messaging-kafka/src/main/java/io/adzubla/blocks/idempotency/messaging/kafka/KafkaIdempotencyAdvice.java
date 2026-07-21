@@ -65,6 +65,14 @@ import java.util.Optional;
  * catch-all) for the broker to redeliver once the store has likely
  * recovered. {@code onStoreFailure=OPEN} (the default) instead resolves to
  * {@link EngineDecision.ProceedUnprotected} above, handled since Slice 035.
+ * Slice 039 covers the bad-key cases evaluated before a decision is even
+ * requested: {@code keyRequired=true} with no resolvable key, or a key
+ * value outside the configured size/charset, is routed to the dead-letter
+ * topic (the same {@link KafkaDeadLetterPublisher} Slice 036 uses) instead
+ * of invoking the listener - a structurally bad message no broker-native
+ * redelivery can fix, since it will never carry a valid key.
+ * {@code keyRequired=false} with no key present instead passes through
+ * unprotected (client opt-in, same as HTTP), unchanged since Slice 035.
  *
  * <p>Whether a thrown exception actually leaves the delivery un-acked - and
  * how soon it's retried ("nack-with-backoff", PRD §5) rather than
@@ -107,15 +115,13 @@ public class KafkaIdempotencyAdvice {
                 : KafkaHeaderKeyStrategy.resolve(record.headers(), annotation.header());
         if (rawKey.isEmpty()) {
             if (policy.keyRequired()) {
-                throw new IllegalStateException(
-                        "Idempotency key missing but required: topic=" + record.topic() + " listener=" + listenerIdOf(method));
+                return deadLetter(record, "key missing but required", record.topic(), listenerIdOf(method), "n/a");
             }
             // keyRequired=false: protection is a client opt-in - pass through unprotected, nothing cached.
             return joinPoint.proceed();
         }
         if (!KeyFormat.isValid(rawKey.get(), properties.getKey().getMaxLength())) {
-            throw new IllegalStateException(
-                    "Idempotency key value invalid (size/charset): topic=" + record.topic() + " listener=" + listenerIdOf(method));
+            return deadLetter(record, "key value invalid (size/charset)", record.topic(), listenerIdOf(method), rawKey.get());
         }
 
         EffectiveKey key = KafkaEffectiveKeyFactory.create(record.topic(), listenerIdOf(method), rawKey.get());
@@ -145,10 +151,7 @@ public class KafkaIdempotencyAdvice {
             return null;
         }
         if (decision instanceof EngineDecision.Collision) {
-            log.debug("Idempotency collision - routing to dead-letter: topic={} listener={} key={}",
-                    key.route(), key.handler(), key.value());
-            deadLetterPublisher.publish(record);
-            return null;
+            return deadLetter(record, "collision (fingerprint mismatch)", key.route(), key.handler(), key.value());
         }
         if (decision instanceof EngineDecision.Reject reject && reject.reason() == RejectReason.IN_PROGRESS) {
             log.debug("Concurrent duplicate delivery acked without invoking the listener: topic={} listener={} key={}",
@@ -163,6 +166,13 @@ public class KafkaIdempotencyAdvice {
         }
         throw new IllegalStateException("Idempotency decision " + decision + " is not yet handled for topic="
                 + record.topic() + " listener=" + listenerIdOf(method));
+    }
+
+    /** Routes {@code record} to its dead-letter topic instead of invoking the listener; always returns {@code null} (acked, skipped). */
+    private Object deadLetter(ConsumerRecord<?, ?> record, String reason, String route, String handler, String value) {
+        log.debug("Idempotency {} - routing to dead-letter: topic={} listener={} key={}", reason, route, handler, value);
+        deadLetterPublisher.publish(record);
+        return null;
     }
 
     private static ConsumerRecord<?, ?> consumerRecordOf(Object[] args, Method method) {

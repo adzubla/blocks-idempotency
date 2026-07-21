@@ -93,13 +93,29 @@ class KafkaIdempotencyAdviceTest {
     }
 
     @Test
-    void missingRequiredKeyThrowsRatherThanInvokingTheListener() throws Throwable {
+    void missingRequiredKeyIsRoutedToTheDeadLetterTopicInsteadOfInvokingTheListener() throws Throwable {
         RecordHeaders headers = new RecordHeaders();
-        ConsumerRecord<String, String> record = consumerRecord(headers);
+        ConsumerRecord<String, String> record = consumerRecord(headers, "{\"amount\":10}");
 
-        assertThatThrownBy(() -> advice.aroundIdempotentListener(joinPointFor(record)))
-                .isInstanceOf(IllegalStateException.class);
+        Object result = advice.aroundIdempotentListener(joinPointFor(record));
+
+        assertThat(result).isNull();
         assertThat(invocations.get()).isZero();
+        verify(deadLetterTemplate, times(1)).send(argThat((ProducerRecord<Object, Object> dlt) -> "orders.DLT".equals(dlt.topic())
+                && "record-key".equals(dlt.key())
+                && "{\"amount\":10}".equals(dlt.value())));
+    }
+
+    @Test
+    void invalidKeyIsRoutedToTheDeadLetterTopicInsteadOfInvokingTheListener() throws Throwable {
+        Object result = advice.aroundIdempotentListener(joinPointFor("not a valid key!", "{\"amount\":10}"));
+
+        assertThat(result).isNull();
+        assertThat(invocations.get()).isZero();
+        verify(deadLetterTemplate, times(1)).send(argThat((ProducerRecord<Object, Object> dlt) -> "orders.DLT".equals(dlt.topic())
+                && "record-key".equals(dlt.key())
+                && "{\"amount\":10}".equals(dlt.value())
+                && "not a valid key!".equals(new String(dlt.headers().lastHeader(HEADER).value(), StandardCharsets.UTF_8))));
     }
 
     @Test

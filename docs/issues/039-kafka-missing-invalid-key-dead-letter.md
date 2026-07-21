@@ -17,12 +17,12 @@ The bad-key cases, per the PRD §5 action-mapping table:
 
 ## Acceptance criteria
 
-- [ ] `keyRequired=true` + missing key → dead-letter, listener not invoked
-- [ ] `keyRequired=true` + invalid key (size/charset) → dead-letter,
+- [x] `keyRequired=true` + missing key → dead-letter, listener not invoked
+- [x] `keyRequired=true` + invalid key (size/charset) → dead-letter,
       listener not invoked
-- [ ] `keyRequired=false` + missing key → listener executes normally,
+- [x] `keyRequired=false` + missing key → listener executes normally,
       unprotected
-- [ ] Covered by tests for each case
+- [x] Covered by tests for each case
 
 ## Blocked by
 
