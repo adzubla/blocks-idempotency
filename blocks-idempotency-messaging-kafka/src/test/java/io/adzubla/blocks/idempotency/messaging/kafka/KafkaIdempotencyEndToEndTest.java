@@ -1,6 +1,7 @@
 package io.adzubla.blocks.idempotency.messaging.kafka;
 
 import io.adzubla.blocks.idempotency.annotation.Idempotent;
+import io.adzubla.blocks.idempotency.annotation.Idempotent.OnStoreFailure;
 import io.adzubla.blocks.idempotency.store.InMemoryIdempotencyStore;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -25,9 +26,11 @@ import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
+import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.test.EmbeddedKafkaBroker;
 import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.kafka.test.utils.KafkaTestUtils;
+import org.springframework.util.backoff.FixedBackOff;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -50,7 +53,7 @@ import static org.awaitility.Awaitility.await;
  */
 @SpringBootTest(classes = KafkaIdempotencyEndToEndTest.TestApplication.class,
         properties = "idempotency.default-store=" + InMemoryIdempotencyStore.QUALIFIER)
-@EmbeddedKafka(partitions = 1, topics = {"orders", "orders.DLT"})
+@EmbeddedKafka(partitions = 1, topics = {"orders", "orders.DLT", "orders-fail-closed"})
 class KafkaIdempotencyEndToEndTest {
 
     private static final String HEADER = Idempotent.IDEMPOTENCY_KEY_HEADER;
@@ -62,11 +65,15 @@ class KafkaIdempotencyEndToEndTest {
     private AtomicInteger listenerInvocations;
 
     @Autowired
+    private InMemoryIdempotencyStore idempotencyStore;
+
+    @Autowired
     private EmbeddedKafkaBroker embeddedKafkaBroker;
 
     @BeforeEach
     void resetFixtures() {
         listenerInvocations.set(0);
+        idempotencyStore.setUnavailable(false);
     }
 
     @Test
@@ -118,8 +125,30 @@ class KafkaIdempotencyEndToEndTest {
         assertThat(listenerInvocations.get()).isEqualTo(1);
     }
 
+    @Test
+    void storeUnavailableWithFailClosedLeavesTheMessageUnackedUntilTheStoreRecovers() {
+        idempotencyStore.setUnavailable(true);
+
+        send("orders-fail-closed", "key-outage-closed", "{\"amount\":10}");
+
+        // While the store stays down, the delivery keeps failing (thrown, not acked) rather
+        // than being silently skipped - the listener is never invoked, and the container's
+        // error handler (FixedBackOff, configured below) keeps retrying instead of giving up.
+        await().pollDelay(Duration.ofSeconds(2)).atMost(Duration.ofSeconds(10)).untilAsserted(() -> assertThat(listenerInvocations.get()).isZero());
+
+        idempotencyStore.setUnavailable(false);
+
+        // Once the store recovers, the broker's redelivery (via the container's retry) lets
+        // this same message succeed - it was never lost, only left un-acked.
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> assertThat(listenerInvocations.get()).isEqualTo(1));
+    }
+
     private void send(String idempotencyKey, String payload) {
-        ProducerRecord<String, String> record = new ProducerRecord<>("orders", null, "record-key", payload);
+        send("orders", idempotencyKey, payload);
+    }
+
+    private void send(String topic, String idempotencyKey, String payload) {
+        ProducerRecord<String, String> record = new ProducerRecord<>(topic, null, "record-key", payload);
         record.headers().add(HEADER, idempotencyKey.getBytes(StandardCharsets.UTF_8));
         kafkaTemplate.send(record);
     }
@@ -142,6 +171,11 @@ class KafkaIdempotencyEndToEndTest {
         @Bean
         OrdersListener ordersListener(AtomicInteger listenerInvocations) {
             return new OrdersListener(listenerInvocations);
+        }
+
+        @Bean
+        FailClosedOrdersListener failClosedOrdersListener(AtomicInteger listenerInvocations) {
+            return new FailClosedOrdersListener(listenerInvocations);
         }
 
         @Bean
@@ -174,6 +208,11 @@ class KafkaIdempotencyEndToEndTest {
                 ConsumerFactory<String, String> consumerFactory) {
             ConcurrentKafkaListenerContainerFactory<String, String> factory = new ConcurrentKafkaListenerContainerFactory<>();
             factory.setConsumerFactory(consumerFactory);
+            // A thrown exception (e.g. onStoreFailure=CLOSED, Slice 038) must not be lost to a
+            // default retry budget that gives up and commits the offset anyway - retry
+            // indefinitely with a short, fixed delay so the message survives until whatever
+            // made the store unavailable resolves.
+            factory.setCommonErrorHandler(new DefaultErrorHandler(new FixedBackOff(200L, FixedBackOff.UNLIMITED_ATTEMPTS)));
             return factory;
         }
     }
@@ -188,6 +227,21 @@ class KafkaIdempotencyEndToEndTest {
 
         @Idempotent(header = HEADER)
         @KafkaListener(id = "orders-listener", topics = "orders")
+        void onMessage(ConsumerRecord<String, String> record) {
+            listenerInvocations.incrementAndGet();
+        }
+    }
+
+    static class FailClosedOrdersListener {
+
+        private final AtomicInteger listenerInvocations;
+
+        FailClosedOrdersListener(AtomicInteger listenerInvocations) {
+            this.listenerInvocations = listenerInvocations;
+        }
+
+        @Idempotent(header = HEADER, onStoreFailure = OnStoreFailure.CLOSED)
+        @KafkaListener(id = "orders-fail-closed-listener", topics = "orders-fail-closed")
         void onMessage(ConsumerRecord<String, String> record) {
             listenerInvocations.incrementAndGet();
         }

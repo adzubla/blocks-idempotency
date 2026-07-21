@@ -1,6 +1,7 @@
 package io.adzubla.blocks.idempotency.messaging.kafka;
 
 import io.adzubla.blocks.idempotency.annotation.Idempotent;
+import io.adzubla.blocks.idempotency.annotation.Idempotent.OnStoreFailure;
 import io.adzubla.blocks.idempotency.config.IdempotencyProperties;
 import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
 import io.adzubla.blocks.idempotency.fingerprint.Fingerprint;
@@ -168,6 +169,16 @@ class KafkaIdempotencyAdviceTest {
     }
 
     @Test
+    void storeUnavailableWithFailClosedThrowsRatherThanInvokingTheListener() throws Throwable {
+        store.setUnavailable(true);
+
+        assertThatThrownBy(() -> advice.aroundIdempotentListener(joinPointFor("key-outage-closed", "{}", FailClosedListener.class)))
+                .isInstanceOf(IllegalStateException.class);
+
+        assertThat(invocations.get()).isZero();
+    }
+
+    @Test
     void missingKeyWithKeyOptionalPassesThroughUnprotected() throws Throwable {
         RecordHeaders headers = new RecordHeaders();
         ConsumerRecord<String, String> record = consumerRecord(headers);
@@ -185,6 +196,12 @@ class KafkaIdempotencyAdviceTest {
         RecordHeaders headers = new RecordHeaders();
         headers.add(HEADER, idempotencyKey.getBytes(StandardCharsets.UTF_8));
         return joinPointFor(consumerRecord(headers, body));
+    }
+
+    private ProceedingJoinPoint joinPointFor(String idempotencyKey, String body, Class<?> listenerClass) throws Throwable {
+        RecordHeaders headers = new RecordHeaders();
+        headers.add(HEADER, idempotencyKey.getBytes(StandardCharsets.UTF_8));
+        return joinPointFor(consumerRecord(headers, body), listenerClass);
     }
 
     /**
@@ -253,6 +270,13 @@ class KafkaIdempotencyAdviceTest {
     static class OptionalKeyListener {
         @Idempotent(header = HEADER, keyRequired = false)
         @KafkaListener(id = "test-listener-optional", topics = "orders")
+        void onMessage(ConsumerRecord<String, String> record) {
+        }
+    }
+
+    static class FailClosedListener {
+        @Idempotent(header = HEADER, onStoreFailure = OnStoreFailure.CLOSED)
+        @KafkaListener(id = "test-listener-fail-closed", topics = "orders")
         void onMessage(ConsumerRecord<String, String> record) {
         }
     }

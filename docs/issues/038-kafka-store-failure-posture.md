@@ -18,11 +18,11 @@ The store-unavailable posture, per the PRD §5 action-mapping table:
 
 ## Acceptance criteria
 
-- [ ] `onStoreFailure=CLOSED` + store unavailable → message is not acked,
+- [x] `onStoreFailure=CLOSED` + store unavailable → message is not acked,
       listener is not invoked
-- [ ] `onStoreFailure=OPEN` + store unavailable → listener executes
+- [x] `onStoreFailure=OPEN` + store unavailable → listener executes
       normally, unprotected
-- [ ] Covered by tests simulating store unavailability under both postures
+- [x] Covered by tests simulating store unavailability under both postures
 
 ## Blocked by
 

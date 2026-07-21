@@ -56,10 +56,25 @@ import java.util.Optional;
  * needed as a backup. {@code whenInProgress=WAIT} is disabled for v1 (ADR
  * 0005, enforced at startup in Slice 040), so {@link RejectReason#RELEASED}/
  * {@link RejectReason#TIMEOUT} (WAIT-only outcomes) aren't expected to reach
- * this advice; {@link EngineDecision.FailClosed} is out of scope for this
- * slice (see Slice 038 for its nack action) and for now simply propagates as
- * a thrown exception, which Spring Kafka's default listener error handling
- * treats as a failed delivery.
+ * this advice - a stray occurrence still falls through to the catch-all
+ * thrown exception below rather than being silently ack-skipped. Slice 038
+ * adds {@link EngineDecision.FailClosed}: the store is unavailable and the
+ * resolved posture is {@code onStoreFailure=CLOSED} - transient
+ * infrastructure trouble, not a poison message, so the listener is not
+ * invoked and the delivery is left un-acked (thrown exception, same as the
+ * catch-all) for the broker to redeliver once the store has likely
+ * recovered. {@code onStoreFailure=OPEN} (the default) instead resolves to
+ * {@link EngineDecision.ProceedUnprotected} above, handled since Slice 035.
+ *
+ * <p>Whether a thrown exception actually leaves the delivery un-acked - and
+ * how soon it's retried ("nack-with-backoff", PRD §5) rather than
+ * exhausting a default retry budget and being skipped anyway - depends
+ * entirely on the {@code ConcurrentKafkaListenerContainerFactory}'s error
+ * handler, which this module doesn't own or configure (see {@code
+ * KafkaIdempotencyEndToEndTest}'s test app, which wires a {@code
+ * DefaultErrorHandler} with an unlimited {@code FixedBackOff} to prove the
+ * mechanism end-to-end). An application using this posture in production
+ * needs its own container-factory error handler configured accordingly.
  */
 @Aspect
 public class KafkaIdempotencyAdvice {
@@ -139,6 +154,12 @@ public class KafkaIdempotencyAdvice {
             log.debug("Concurrent duplicate delivery acked without invoking the listener: topic={} listener={} key={}",
                     key.route(), key.handler(), key.value());
             return null;
+        }
+        if (decision instanceof EngineDecision.FailClosed) {
+            log.warn("Idempotency store unavailable (onStoreFailure=CLOSED) - listener not invoked, message left un-acked "
+                    + "for broker redelivery: topic={} listener={} key={}", key.route(), key.handler(), key.value());
+            throw new IllegalStateException("Idempotency store unavailable (onStoreFailure=CLOSED) for topic=" + record.topic()
+                    + " listener=" + listenerIdOf(method) + " - message not acked, awaiting broker redelivery");
         }
         throw new IllegalStateException("Idempotency decision " + decision + " is not yet handled for topic="
                 + record.topic() + " listener=" + listenerIdOf(method));
