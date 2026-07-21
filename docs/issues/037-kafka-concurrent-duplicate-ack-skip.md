@@ -16,11 +16,11 @@ isn't needed as a backup.
 
 ## Acceptance criteria
 
-- [ ] A concurrent duplicate delivery (key already reserved, same
+- [x] A concurrent duplicate delivery (key already reserved, same
       fingerprint) is acked and the listener is **not** invoked
-- [ ] The primary's own execution and completion are unaffected by the
+- [x] The primary's own execution and completion are unaffected by the
       concurrent duplicate
-- [ ] Covered by a test simulating two concurrent deliveries of the same key
+- [x] Covered by a test simulating two concurrent deliveries of the same key
 
 ## Blocked by
 

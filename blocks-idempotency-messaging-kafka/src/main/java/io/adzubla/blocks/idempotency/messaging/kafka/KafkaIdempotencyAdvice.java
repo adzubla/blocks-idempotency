@@ -5,6 +5,7 @@ import io.adzubla.blocks.idempotency.config.IdempotencyProperties;
 import io.adzubla.blocks.idempotency.engine.EngineDecision;
 import io.adzubla.blocks.idempotency.engine.IdempotencyEngine;
 import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
+import io.adzubla.blocks.idempotency.engine.RejectReason;
 import io.adzubla.blocks.idempotency.fingerprint.Fingerprint;
 import io.adzubla.blocks.idempotency.key.BodyFieldKeyStrategy;
 import io.adzubla.blocks.idempotency.key.KeyFormat;
@@ -46,11 +47,19 @@ import java.util.Optional;
  * EngineDecision.Collision}: a key reused with a different payload is a
  * producer bug or poison message no consumer-side retry resolves, so it's
  * routed to the dead-letter topic via {@link KafkaDeadLetterPublisher}
- * instead of invoking the listener (PRD §5). {@link
- * EngineDecision.Reject}/{@link EngineDecision.FailClosed} are out of scope
- * for this slice (see Slices 037/038 for their broker-specific ack-skip/nack
- * actions) and for now simply propagate as a thrown exception, which Spring
- * Kafka's default listener error handling treats as a failed delivery.
+ * instead of invoking the listener (PRD §5). Slice 037 adds {@link
+ * EngineDecision.Reject} with {@link RejectReason#IN_PROGRESS}: a second,
+ * concurrent delivery of the same key (two partitions/consumers racing, or a
+ * rebalance re-delivering mid-processing) is acked and skipped without
+ * re-invoking the listener - safe because the primary's own message is
+ * natively redelivered by the broker if it fails, so the duplicate isn't
+ * needed as a backup. {@code whenInProgress=WAIT} is disabled for v1 (ADR
+ * 0005, enforced at startup in Slice 040), so {@link RejectReason#RELEASED}/
+ * {@link RejectReason#TIMEOUT} (WAIT-only outcomes) aren't expected to reach
+ * this advice; {@link EngineDecision.FailClosed} is out of scope for this
+ * slice (see Slice 038 for its nack action) and for now simply propagates as
+ * a thrown exception, which Spring Kafka's default listener error handling
+ * treats as a failed delivery.
  */
 @Aspect
 public class KafkaIdempotencyAdvice {
@@ -124,6 +133,11 @@ public class KafkaIdempotencyAdvice {
             log.debug("Idempotency collision - routing to dead-letter: topic={} listener={} key={}",
                     key.route(), key.handler(), key.value());
             deadLetterPublisher.publish(record);
+            return null;
+        }
+        if (decision instanceof EngineDecision.Reject reject && reject.reason() == RejectReason.IN_PROGRESS) {
+            log.debug("Concurrent duplicate delivery acked without invoking the listener: topic={} listener={} key={}",
+                    key.route(), key.handler(), key.value());
             return null;
         }
         throw new IllegalStateException("Idempotency decision " + decision + " is not yet handled for topic="

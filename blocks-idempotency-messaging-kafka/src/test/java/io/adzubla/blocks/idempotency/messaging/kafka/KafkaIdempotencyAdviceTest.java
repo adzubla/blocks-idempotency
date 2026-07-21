@@ -3,7 +3,11 @@ package io.adzubla.blocks.idempotency.messaging.kafka;
 import io.adzubla.blocks.idempotency.annotation.Idempotent;
 import io.adzubla.blocks.idempotency.config.IdempotencyProperties;
 import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
+import io.adzubla.blocks.idempotency.fingerprint.Fingerprint;
+import io.adzubla.blocks.idempotency.messaging.kafka.key.KafkaEffectiveKeyFactory;
 import io.adzubla.blocks.idempotency.metrics.NoOpIdempotencyMetrics;
+import io.adzubla.blocks.idempotency.model.EffectiveKey;
+import io.adzubla.blocks.idempotency.model.RecordState;
 import io.adzubla.blocks.idempotency.store.InMemoryIdempotencyStore;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -20,7 +24,10 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -109,6 +116,49 @@ class KafkaIdempotencyAdviceTest {
     }
 
     @Test
+    void concurrentDuplicateDeliveryOfTheSameKeyIsAckedWithoutInvokingTheListener() throws Throwable {
+        String idempotencyKey = "key-race";
+        String body = "{\"amount\":10}";
+        CountDownLatch primaryStarted = new CountDownLatch(1);
+        CountDownLatch releasePrimary = new CountDownLatch(1);
+        AtomicReference<Throwable> primaryFailure = new AtomicReference<>();
+
+        Thread primaryThread = new Thread(() -> {
+            try {
+                advice.aroundIdempotentListener(blockingJoinPointFor(idempotencyKey, body, primaryStarted, releasePrimary));
+            } catch (Throwable t) {
+                primaryFailure.set(t);
+            }
+        });
+        primaryThread.start();
+        try {
+            assertThat(primaryStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+            // The primary is still mid-processing (reserved, not yet completed) - a concurrent
+            // duplicate delivery of the same key finds it IN_PROGRESS.
+            Object duplicateResult = advice.aroundIdempotentListener(joinPointFor(idempotencyKey, body));
+            assertThat(duplicateResult).isNull();
+            assertThat(invocations.get()).isZero();
+        } finally {
+            // Unconditional even if an assertion above threw, so the primary thread never
+            // outlives the test relying solely on its own await() timeout to unblock.
+            releasePrimary.countDown();
+        }
+        primaryThread.join(TimeUnit.SECONDS.toMillis(5));
+        assertThat(primaryThread.isAlive()).isFalse();
+        assertThat(primaryFailure.get()).isNull();
+
+        // The primary's own execution and completion are unaffected by the concurrent duplicate.
+        assertThat(invocations.get()).isEqualTo(1);
+        EffectiveKey key = KafkaEffectiveKeyFactory.create("orders", "test-listener", idempotencyKey);
+        String fingerprint = Fingerprint.sha256(key.route(), key.handler(), body.getBytes(StandardCharsets.UTF_8));
+        assertThat(store.find(key)).hasValueSatisfying(record -> {
+            assertThat(record.state()).isEqualTo(RecordState.COMPLETED);
+            assertThat(record.fingerprint()).isEqualTo(fingerprint);
+        });
+    }
+
+    @Test
     void storeUnavailableWithFailOpenLetsTheListenerRunUnprotected() throws Throwable {
         store.setUnavailable(true);
 
@@ -135,6 +185,34 @@ class KafkaIdempotencyAdviceTest {
         RecordHeaders headers = new RecordHeaders();
         headers.add(HEADER, idempotencyKey.getBytes(StandardCharsets.UTF_8));
         return joinPointFor(consumerRecord(headers, body));
+    }
+
+    /**
+     * A join point whose {@code proceed()} signals {@code started} (the
+     * point at which the reservation already exists, since {@code before()}
+     * runs before {@code proceed()} is ever called) and then blocks on
+     * {@code release} before incrementing {@code invocations} - simulating a
+     * primary listener invocation slow enough for a real concurrent
+     * duplicate delivery to observe it mid-processing.
+     */
+    private ProceedingJoinPoint blockingJoinPointFor(String idempotencyKey, String body, CountDownLatch started, CountDownLatch release)
+            throws Throwable {
+        RecordHeaders headers = new RecordHeaders();
+        headers.add(HEADER, idempotencyKey.getBytes(StandardCharsets.UTF_8));
+        Method method = Listener.class.getDeclaredMethod("onMessage", ConsumerRecord.class);
+        MethodSignature signature = mock(MethodSignature.class);
+        when(signature.getMethod()).thenReturn(method);
+
+        ProceedingJoinPoint joinPoint = mock(ProceedingJoinPoint.class);
+        when(joinPoint.getSignature()).thenReturn(signature);
+        when(joinPoint.getArgs()).thenReturn(new Object[] {consumerRecord(headers, body)});
+        when(joinPoint.proceed()).thenAnswer(invocation -> {
+            started.countDown();
+            assertThat(release.await(10, TimeUnit.SECONDS)).isTrue();
+            invocations.incrementAndGet();
+            return null;
+        });
+        return joinPoint;
     }
 
     private ConsumerRecord<String, String> consumerRecord(RecordHeaders headers) {
