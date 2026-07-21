@@ -21,15 +21,15 @@ rule from `docs/adr/0005-messaging-wait-disabled.md`:
 
 ## Acceptance criteria
 
-- [ ] Startup fails with a clear error if a `@KafkaListener`+`@Idempotent`
+- [x] Startup fails with a clear error if a `@KafkaListener`+`@Idempotent`
       method has `whenInProgress=WAIT` (explicit or inherited from the
       global default)
-- [ ] Startup fails with a clear error for: both/neither of
+- [x] Startup fails with a clear error for: both/neither of
       `header`/`fieldPath` set, an invalid `ttl`, or an unresolvable `store`
       qualifier
-- [ ] A correctly configured `@KafkaListener`+`@Idempotent` method
+- [x] A correctly configured `@KafkaListener`+`@Idempotent` method
       (`whenInProgress=REJECT` or unset) passes validation
-- [ ] Covered by tests for each failure case and the pass case
+- [x] Covered by tests for each failure case and the pass case
 
 ## Blocked by
 

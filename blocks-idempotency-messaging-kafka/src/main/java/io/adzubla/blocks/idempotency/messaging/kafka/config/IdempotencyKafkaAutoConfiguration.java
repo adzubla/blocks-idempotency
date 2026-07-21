@@ -5,7 +5,9 @@ import io.adzubla.blocks.idempotency.config.IdempotencyProperties;
 import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
 import io.adzubla.blocks.idempotency.messaging.kafka.KafkaDeadLetterPublisher;
 import io.adzubla.blocks.idempotency.messaging.kafka.KafkaIdempotencyAdvice;
+import io.adzubla.blocks.idempotency.messaging.kafka.validation.KafkaIdempotentListenerValidator;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -33,6 +35,11 @@ import org.springframework.kafka.core.KafkaTemplate;
  * dead-letter, which only surfaces as a thrown exception the moment a
  * collision actually occurs, rather than blocking every {@code @Idempotent}
  * listener from being registered at all.
+ *
+ * <p>Also registers the {@link KafkaIdempotentListenerValidator} (Slice 040)
+ * that fails startup fast on a misconfigured {@code @Idempotent}
+ * {@code @KafkaListener} method, including {@code whenInProgress=WAIT}
+ * (ADR 0005) and one whose store qualifier resolves to no bean at all.
  */
 @AutoConfiguration
 @ConditionalOnClass(KafkaListener.class)
@@ -52,5 +59,11 @@ public class IdempotencyKafkaAutoConfiguration {
     public KafkaIdempotencyAdvice kafkaIdempotencyAdvice(IdempotencyEngineRegistry engineRegistry, IdempotencyProperties properties,
             KafkaDeadLetterPublisher deadLetterPublisher) {
         return new KafkaIdempotencyAdvice(engineRegistry, properties, deadLetterPublisher);
+    }
+
+    @Bean
+    public KafkaIdempotentListenerValidator kafkaIdempotentListenerValidator(ConfigurableListableBeanFactory beanFactory,
+            IdempotencyProperties properties) {
+        return new KafkaIdempotentListenerValidator(beanFactory, properties);
     }
 }
