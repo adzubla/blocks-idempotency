@@ -2,6 +2,7 @@ package io.adzubla.blocks.idempotency.messaging.kafka;
 
 import io.adzubla.blocks.idempotency.annotation.Idempotent;
 import io.adzubla.blocks.idempotency.store.InMemoryIdempotencyStore;
+import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.ProducerConfig;
@@ -24,7 +25,9 @@ import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaProducerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.core.ProducerFactory;
+import org.springframework.kafka.test.EmbeddedKafkaBroker;
 import org.springframework.kafka.test.context.EmbeddedKafka;
+import org.springframework.kafka.test.utils.KafkaTestUtils;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -36,7 +39,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 /**
- * End-to-end coverage of Slice 035: an {@code @Idempotent} + {@code
+ * End-to-end coverage of Slices 035/036: an {@code @Idempotent} + {@code
  * @KafkaListener} method intercepted through the real AOP advice + engine +
  * in-memory store, over a real (embedded) broker.
  *
@@ -47,7 +50,7 @@ import static org.awaitility.Awaitility.await;
  */
 @SpringBootTest(classes = KafkaIdempotencyEndToEndTest.TestApplication.class,
         properties = "idempotency.default-store=" + InMemoryIdempotencyStore.QUALIFIER)
-@EmbeddedKafka(partitions = 1, topics = {"orders"})
+@EmbeddedKafka(partitions = 1, topics = {"orders", "orders.DLT"})
 class KafkaIdempotencyEndToEndTest {
 
     private static final String HEADER = Idempotent.IDEMPOTENCY_KEY_HEADER;
@@ -57,6 +60,9 @@ class KafkaIdempotencyEndToEndTest {
 
     @Autowired
     private AtomicInteger listenerInvocations;
+
+    @Autowired
+    private EmbeddedKafkaBroker embeddedKafkaBroker;
 
     @BeforeEach
     void resetFixtures() {
@@ -88,6 +94,28 @@ class KafkaIdempotencyEndToEndTest {
         send("key-4", "{\"amount\":10}");
 
         await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> assertThat(listenerInvocations.get()).isEqualTo(2));
+    }
+
+    @Test
+    void collisionWithADifferentBodyIsRoutedToTheDeadLetterTopicInsteadOfInvokingTheListener() {
+        send("key-collision", "{\"amount\":10}");
+        await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> assertThat(listenerInvocations.get()).isEqualTo(1));
+
+        send("key-collision", "{\"amount\":20}");
+
+        Map<String, Object> consumerProps = KafkaTestUtils.consumerProps(embeddedKafkaBroker, "dlt-test", true);
+        consumerProps.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        consumerProps.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        try (Consumer<String, String> dltConsumer = new DefaultKafkaConsumerFactory<String, String>(consumerProps).createConsumer()) {
+            embeddedKafkaBroker.consumeFromAnEmbeddedTopic(dltConsumer, "orders.DLT");
+            ConsumerRecord<String, String> deadLettered = KafkaTestUtils.getSingleRecord(dltConsumer, "orders.DLT", Duration.ofSeconds(15));
+            assertThat(deadLettered.key()).isEqualTo("record-key");
+            assertThat(deadLettered.value()).isEqualTo("{\"amount\":20}");
+            assertThat(deadLettered.headers().lastHeader(HEADER).value()).isEqualTo("key-collision".getBytes(StandardCharsets.UTF_8));
+        }
+
+        // The original delivery's own completion is unaffected - the listener never ran a second time.
+        assertThat(listenerInvocations.get()).isEqualTo(1);
     }
 
     private void send(String idempotencyKey, String payload) {

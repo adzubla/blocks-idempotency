@@ -13,11 +13,11 @@ poison message; no consumer-side retry resolves it, so this is terminal.
 
 ## Acceptance criteria
 
-- [ ] A delivery with the same key but a different body fingerprint is
+- [x] A delivery with the same key but a different body fingerprint is
       routed to the dead-letter topic
-- [ ] The listener is **not** invoked on a collision
-- [ ] The original (first) delivery's completion is unaffected
-- [ ] Covered by an embedded-Kafka end-to-end test
+- [x] The listener is **not** invoked on a collision
+- [x] The original (first) delivery's completion is unaffected
+- [x] Covered by an embedded-Kafka end-to-end test
 
 ## Blocked by
 

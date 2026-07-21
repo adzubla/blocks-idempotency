@@ -42,12 +42,15 @@ import java.util.Optional;
  * the completed-duplicate case (always {@link EngineDecision.Unavailable},
  * never {@code Replay}, since the sentinel response is always bodyless - see
  * {@link IdempotencyEngine#complete}'s javadoc) which is acked and skipped
- * without re-invoking the listener. {@link EngineDecision.Collision}/{@link
+ * without re-invoking the listener. Slice 036 adds {@link
+ * EngineDecision.Collision}: a key reused with a different payload is a
+ * producer bug or poison message no consumer-side retry resolves, so it's
+ * routed to the dead-letter topic via {@link KafkaDeadLetterPublisher}
+ * instead of invoking the listener (PRD §5). {@link
  * EngineDecision.Reject}/{@link EngineDecision.FailClosed} are out of scope
- * for this slice (see Slices 036/037/038/039 for their broker-specific
- * dead-letter/ack-skip/nack actions) and for now simply propagate as a
- * thrown exception, which Spring Kafka's default listener error handling
- * treats as a failed delivery.
+ * for this slice (see Slices 037/038 for their broker-specific ack-skip/nack
+ * actions) and for now simply propagate as a thrown exception, which Spring
+ * Kafka's default listener error handling treats as a failed delivery.
  */
 @Aspect
 public class KafkaIdempotencyAdvice {
@@ -56,10 +59,13 @@ public class KafkaIdempotencyAdvice {
 
     private final IdempotencyEngineRegistry engineRegistry;
     private final IdempotencyProperties properties;
+    private final KafkaDeadLetterPublisher deadLetterPublisher;
 
-    public KafkaIdempotencyAdvice(IdempotencyEngineRegistry engineRegistry, IdempotencyProperties properties) {
+    public KafkaIdempotencyAdvice(IdempotencyEngineRegistry engineRegistry, IdempotencyProperties properties,
+            KafkaDeadLetterPublisher deadLetterPublisher) {
         this.engineRegistry = engineRegistry;
         this.properties = properties;
+        this.deadLetterPublisher = deadLetterPublisher;
     }
 
     @Around("@annotation(io.adzubla.blocks.idempotency.annotation.Idempotent) "
@@ -112,6 +118,12 @@ public class KafkaIdempotencyAdvice {
         if (decision instanceof EngineDecision.Replay || decision instanceof EngineDecision.Unavailable) {
             log.debug("Duplicate Kafka delivery acked without re-invoking the listener: topic={} listener={} key={}",
                     key.route(), key.handler(), key.value());
+            return null;
+        }
+        if (decision instanceof EngineDecision.Collision) {
+            log.debug("Idempotency collision - routing to dead-letter: topic={} listener={} key={}",
+                    key.route(), key.handler(), key.value());
+            deadLetterPublisher.publish(record);
             return null;
         }
         throw new IllegalStateException("Idempotency decision " + decision + " is not yet handled for topic="

@@ -6,6 +6,7 @@ import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
 import io.adzubla.blocks.idempotency.metrics.NoOpIdempotencyMetrics;
 import io.adzubla.blocks.idempotency.store.InMemoryIdempotencyStore;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.header.internals.RecordHeaders;
 import org.apache.kafka.common.record.TimestampType;
 import org.aspectj.lang.ProceedingJoinPoint;
@@ -13,6 +14,7 @@ import org.aspectj.lang.reflect.MethodSignature;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.core.KafkaTemplate;
 
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
@@ -22,7 +24,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -37,9 +42,11 @@ class KafkaIdempotencyAdviceTest {
     private static final String HEADER = "Idempotency-Key";
 
     private InMemoryIdempotencyStore store;
+    private KafkaTemplate<Object, Object> deadLetterTemplate;
     private KafkaIdempotencyAdvice advice;
     private AtomicInteger invocations;
 
+    @SuppressWarnings("unchecked")
     @BeforeEach
     void setUp() {
         IdempotencyProperties properties = new IdempotencyProperties();
@@ -48,7 +55,9 @@ class KafkaIdempotencyAdviceTest {
         IdempotencyEngineRegistry engineRegistry = new IdempotencyEngineRegistry(
                 Map.of(InMemoryIdempotencyStore.QUALIFIER, store), properties.getPollInterval(), properties.getPollJitter(),
                 NoOpIdempotencyMetrics.INSTANCE);
-        advice = new KafkaIdempotencyAdvice(engineRegistry, properties);
+        deadLetterTemplate = mock(KafkaTemplate.class);
+        KafkaDeadLetterPublisher deadLetterPublisher = new KafkaDeadLetterPublisher(deadLetterTemplate, ".DLT");
+        advice = new KafkaIdempotencyAdvice(engineRegistry, properties, deadLetterPublisher);
         invocations = new AtomicInteger();
     }
 
@@ -86,6 +95,20 @@ class KafkaIdempotencyAdviceTest {
     }
 
     @Test
+    void collisionWithADifferentBodyIsRoutedToTheDeadLetterTopicInsteadOfInvokingTheListener() throws Throwable {
+        advice.aroundIdempotentListener(joinPointFor("key-collision", "{\"amount\":10}"));
+        assertThat(invocations.get()).isEqualTo(1);
+
+        advice.aroundIdempotentListener(joinPointFor("key-collision", "{\"amount\":20}"));
+
+        assertThat(invocations.get()).isEqualTo(1);
+        verify(deadLetterTemplate, times(1)).send(argThat((ProducerRecord<Object, Object> record) -> "orders.DLT".equals(record.topic())
+                && "record-key".equals(record.key())
+                && "{\"amount\":20}".equals(record.value())
+                && "key-collision".equals(new String(record.headers().lastHeader(HEADER).value(), StandardCharsets.UTF_8))));
+    }
+
+    @Test
     void storeUnavailableWithFailOpenLetsTheListenerRunUnprotected() throws Throwable {
         store.setUnavailable(true);
 
@@ -105,14 +128,22 @@ class KafkaIdempotencyAdviceTest {
     }
 
     private ProceedingJoinPoint joinPointFor(String idempotencyKey) throws Throwable {
+        return joinPointFor(idempotencyKey, "{}");
+    }
+
+    private ProceedingJoinPoint joinPointFor(String idempotencyKey, String body) throws Throwable {
         RecordHeaders headers = new RecordHeaders();
         headers.add(HEADER, idempotencyKey.getBytes(StandardCharsets.UTF_8));
-        return joinPointFor(consumerRecord(headers));
+        return joinPointFor(consumerRecord(headers, body));
     }
 
     private ConsumerRecord<String, String> consumerRecord(RecordHeaders headers) {
+        return consumerRecord(headers, "{}");
+    }
+
+    private ConsumerRecord<String, String> consumerRecord(RecordHeaders headers, String body) {
         return new ConsumerRecord<>("orders", 0, 0L, ConsumerRecord.NO_TIMESTAMP, TimestampType.NO_TIMESTAMP_TYPE,
-                ConsumerRecord.NULL_SIZE, ConsumerRecord.NULL_SIZE, "record-key", "{}", headers, Optional.empty());
+                ConsumerRecord.NULL_SIZE, ConsumerRecord.NULL_SIZE, "record-key", body, headers, Optional.empty());
     }
 
     private ProceedingJoinPoint joinPointFor(ConsumerRecord<?, ?> record) throws Throwable {
