@@ -122,6 +122,35 @@
             <artifactId>spring-kafka-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- Test-only: the RabbitMQ integration this module's Testcontainers
+             end-to-end tests (Slice 047) drive the store through (AOP
+             advice/engine) - not a runtime dependency of the store itself. -->
+        <dependency>
+            <groupId>io.adzubla.blocks</groupId>
+            <artifactId>blocks-idempotency-messaging-rabbitmq</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-rabbitmq</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- RetryOperationsInterceptor, bounding the flaky/no-transactional
+             listeners' thrown-exception redelivery so those tests' retries
+             don't run forever - RabbitMQ's own equivalent of Kafka's
+             DefaultErrorHandler(FixedBackOff) on the container factory. -->
+        <dependency>
+            <groupId>org.springframework.retry</groupId>
+            <artifactId>spring-retry</artifactId>
+            <version>2.0.12</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
 </project>
