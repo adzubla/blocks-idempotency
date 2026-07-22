@@ -17,7 +17,7 @@
     <dependencies>
         <dependency>
             <groupId>io.adzubla.blocks</groupId>
-            <artifactId>blocks-idempotency-core</artifactId>
+            <artifactId>blocks-idempotency-messaging-core</artifactId>
         </dependency>
 
         <dependency>

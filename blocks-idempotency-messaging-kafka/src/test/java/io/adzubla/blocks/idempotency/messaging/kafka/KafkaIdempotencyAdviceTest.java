@@ -5,7 +5,7 @@ import io.adzubla.blocks.idempotency.annotation.Idempotent.OnStoreFailure;
 import io.adzubla.blocks.idempotency.config.IdempotencyProperties;
 import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
 import io.adzubla.blocks.idempotency.fingerprint.Fingerprint;
-import io.adzubla.blocks.idempotency.messaging.kafka.key.KafkaEffectiveKeyFactory;
+import io.adzubla.blocks.idempotency.messaging.core.MessagingEffectiveKeyFactory;
 import io.adzubla.blocks.idempotency.metrics.NoOpIdempotencyMetrics;
 import io.adzubla.blocks.idempotency.model.EffectiveKey;
 import io.adzubla.blocks.idempotency.model.RecordState;
@@ -167,7 +167,7 @@ class KafkaIdempotencyAdviceTest {
 
         // The primary's own execution and completion are unaffected by the concurrent duplicate.
         assertThat(invocations.get()).isEqualTo(1);
-        EffectiveKey key = KafkaEffectiveKeyFactory.create("orders", "test-listener", idempotencyKey);
+        EffectiveKey key = MessagingEffectiveKeyFactory.create("orders", "test-listener", idempotencyKey);
         String fingerprint = Fingerprint.sha256(key.route(), key.handler(), body.getBytes(StandardCharsets.UTF_8));
         assertThat(store.find(key)).hasValueSatisfying(record -> {
             assertThat(record.state()).isEqualTo(RecordState.COMPLETED);

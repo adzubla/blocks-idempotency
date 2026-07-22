@@ -38,16 +38,16 @@ listener-visible behavior changes in either broker module.
 
 ## Acceptance criteria
 
-- [ ] New `blocks-idempotency-messaging-core` module exists, depended on by
+- [x] New `blocks-idempotency-messaging-core` module exists, depended on by
       both `blocks-idempotency-messaging-kafka` and
       `blocks-idempotency-messaging-rabbitmq`
-- [ ] No duplicated action-mapping/key-factory-delegation/validation-rule
+- [x] No duplicated action-mapping/key-factory-delegation/validation-rule
       logic remains between the two broker modules
-- [ ] Full existing test suites for both broker modules pass unchanged —
+- [x] Full existing test suites for both broker modules pass unchanged —
       pure extraction, no behavior change: `mvn test -pl
       blocks-idempotency-messaging-kafka -am`, `mvn test -pl
       blocks-idempotency-messaging-rabbitmq -am`
-- [ ] `blocks-idempotency-messaging-core`'s own extracted pieces are unit
+- [x] `blocks-idempotency-messaging-core`'s own extracted pieces are unit
       tested directly, not just transitively through the broker modules
 
 ## Blocked by

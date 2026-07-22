@@ -1,25 +1,14 @@
 package io.adzubla.blocks.idempotency.messaging.kafka;
 
-import io.adzubla.blocks.idempotency.annotation.Idempotent;
 import io.adzubla.blocks.idempotency.config.IdempotencyProperties;
-import io.adzubla.blocks.idempotency.engine.EngineDecision;
-import io.adzubla.blocks.idempotency.engine.IdempotencyEngine;
 import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
-import io.adzubla.blocks.idempotency.engine.RejectReason;
-import io.adzubla.blocks.idempotency.fingerprint.Fingerprint;
-import io.adzubla.blocks.idempotency.key.BodyFieldKeyStrategy;
-import io.adzubla.blocks.idempotency.key.KeyFormat;
-import io.adzubla.blocks.idempotency.messaging.kafka.key.KafkaEffectiveKeyFactory;
+import io.adzubla.blocks.idempotency.messaging.core.AbstractMessagingIdempotencyAdvice;
+import io.adzubla.blocks.idempotency.messaging.core.MessageDelivery;
 import io.adzubla.blocks.idempotency.messaging.kafka.key.KafkaHeaderKeyStrategy;
-import io.adzubla.blocks.idempotency.model.CachedResponse;
-import io.adzubla.blocks.idempotency.model.EffectiveKey;
-import io.adzubla.blocks.idempotency.policy.IdempotencyPolicy;
-import io.adzubla.blocks.idempotency.policy.PolicyResolver;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
-import org.aspectj.lang.reflect.MethodSignature;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -34,145 +23,112 @@ import java.util.Optional;
  * @Transactional} already uses on listener methods (no buffered-request
  * wrapping needed, unlike {@code web.IdempotencyFilter}/{@code
  * CachedBodyHttpServletRequest} - the message payload already arrives as a
- * plain method argument). Mirrors {@code web.IdempotencyInterceptor}'s
- * preHandle/afterCompletion pair, collapsed into a single around-advice
- * since there's no separate dispatch phase to hook into.
+ * plain method argument).
  *
- * <p>Slice 035 scope: {@link EngineDecision.Proceed} (execute, then complete
- * with {@link CachedResponse#empty()} - v1 is dedupe-only, see ADR 0004) and
- * the completed-duplicate case (always {@link EngineDecision.Unavailable},
- * never {@code Replay}, since the sentinel response is always bodyless - see
- * {@link IdempotencyEngine#complete}'s javadoc) which is acked and skipped
- * without re-invoking the listener. Slice 036 adds {@link
- * EngineDecision.Collision}: a key reused with a different payload is a
- * producer bug or poison message no consumer-side retry resolves, so it's
- * routed to the dead-letter topic via {@link KafkaDeadLetterPublisher}
- * instead of invoking the listener (PRD §5). Slice 037 adds {@link
- * EngineDecision.Reject} with {@link RejectReason#IN_PROGRESS}: a second,
- * concurrent delivery of the same key (two partitions/consumers racing, or a
- * rebalance re-delivering mid-processing) is acked and skipped without
- * re-invoking the listener - safe because the primary's own message is
- * natively redelivered by the broker if it fails, so the duplicate isn't
- * needed as a backup. {@code whenInProgress=WAIT} is disabled for v1 (ADR
- * 0005, enforced at startup in Slice 040), so {@link RejectReason#RELEASED}/
- * {@link RejectReason#TIMEOUT} (WAIT-only outcomes) aren't expected to reach
- * this advice - a stray occurrence still falls through to the catch-all
- * thrown exception below rather than being silently ack-skipped. Slice 038
- * adds {@link EngineDecision.FailClosed}: the store is unavailable and the
- * resolved posture is {@code onStoreFailure=CLOSED} - transient
- * infrastructure trouble, not a poison message, so the listener is not
- * invoked and the delivery is left un-acked (thrown exception, same as the
- * catch-all) for the broker to redeliver once the store has likely
- * recovered. {@code onStoreFailure=OPEN} (the default) instead resolves to
- * {@link EngineDecision.ProceedUnprotected} above, handled since Slice 035.
- * Slice 039 covers the bad-key cases evaluated before a decision is even
- * requested: {@code keyRequired=true} with no resolvable key, or a key
- * value outside the configured size/charset, is routed to the dead-letter
- * topic (the same {@link KafkaDeadLetterPublisher} Slice 036 uses) instead
- * of invoking the listener - a structurally bad message no broker-native
- * redelivery can fix, since it will never carry a valid key.
- * {@code keyRequired=false} with no key present instead passes through
- * unprotected (client opt-in, same as HTTP), unchanged since Slice 035.
+ * <p>The broker-neutral decision skeleton (key resolution, fingerprinting, the
+ * reserve/complete/release flow, and the full PRD §5 decision table) lives in
+ * {@link AbstractMessagingIdempotencyAdvice}, shared with the RabbitMQ module
+ * since Slice 048. This class supplies only the Kafka-specific seams via a
+ * {@link KafkaMessageDelivery}: reading the header/body off a {@link
+ * ConsumerRecord}, and the two terminal actions whose mechanism is
+ * Kafka-specific.
+ *
+ * <p><b>Dead-letter</b> (collision, missing/invalid key - PRD §5 terminal
+ * cases no consumer-side retry resolves): the delivery is republished to its
+ * dead-letter topic via {@link KafkaDeadLetterPublisher} and acked/skipped.
+ * <b>Fail-closed</b> ({@code onStoreFailure=CLOSED} with the store down):
+ * transient infrastructure trouble, not a poison message, so the listener is
+ * not invoked and the delivery is left un-acked (thrown exception) for the
+ * broker to redeliver once the store has likely recovered. {@code
+ * onStoreFailure=OPEN} (the default) instead resolves to {@code
+ * ProceedUnprotected} in the shared skeleton.
  *
  * <p>Whether a thrown exception actually leaves the delivery un-acked - and
- * how soon it's retried ("nack-with-backoff", PRD §5) rather than
- * exhausting a default retry budget and being skipped anyway - depends
- * entirely on the {@code ConcurrentKafkaListenerContainerFactory}'s error
- * handler, which this module doesn't own or configure (see {@code
- * KafkaIdempotencyEndToEndTest}'s test app, which wires a {@code
- * DefaultErrorHandler} with an unlimited {@code FixedBackOff} to prove the
- * mechanism end-to-end). An application using this posture in production
- * needs its own container-factory error handler configured accordingly.
+ * how soon it's retried ("nack-with-backoff", PRD §5) rather than exhausting a
+ * default retry budget and being skipped anyway - depends entirely on the
+ * {@code ConcurrentKafkaListenerContainerFactory}'s error handler, which this
+ * module doesn't own or configure (see {@code KafkaIdempotencyEndToEndTest}'s
+ * test app, which wires a {@code DefaultErrorHandler} with an unlimited {@code
+ * FixedBackOff} to prove the mechanism end-to-end). An application using this
+ * posture in production needs its own container-factory error handler
+ * configured accordingly.
  */
 @Aspect
-public class KafkaIdempotencyAdvice {
+public class KafkaIdempotencyAdvice extends AbstractMessagingIdempotencyAdvice {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaIdempotencyAdvice.class);
 
-    private final IdempotencyEngineRegistry engineRegistry;
-    private final IdempotencyProperties properties;
     private final KafkaDeadLetterPublisher deadLetterPublisher;
 
     public KafkaIdempotencyAdvice(IdempotencyEngineRegistry engineRegistry, IdempotencyProperties properties,
             KafkaDeadLetterPublisher deadLetterPublisher) {
-        this.engineRegistry = engineRegistry;
-        this.properties = properties;
+        super(engineRegistry, properties);
         this.deadLetterPublisher = deadLetterPublisher;
     }
 
     @Around("@annotation(io.adzubla.blocks.idempotency.annotation.Idempotent) "
             + "&& @annotation(org.springframework.kafka.annotation.KafkaListener)")
     public Object aroundIdempotentListener(ProceedingJoinPoint joinPoint) throws Throwable {
-        Method method = ((MethodSignature) joinPoint.getSignature()).getMethod();
-        Idempotent annotation = method.getAnnotation(Idempotent.class);
-        ConsumerRecord<?, ?> record = consumerRecordOf(joinPoint.getArgs(), method);
-
-        IdempotencyPolicy policy = PolicyResolver.resolve(annotation, properties);
-        byte[] body = bodyOf(record);
-
-        Optional<String> rawKey = annotation.header().isEmpty()
-                ? BodyFieldKeyStrategy.resolve(body, annotation.fieldPath())
-                : KafkaHeaderKeyStrategy.resolve(record.headers(), annotation.header());
-        if (rawKey.isEmpty()) {
-            if (policy.keyRequired()) {
-                return deadLetter(record, "key missing but required", record.topic(), listenerIdOf(method), "n/a");
-            }
-            // keyRequired=false: protection is a client opt-in - pass through unprotected, nothing cached.
-            return joinPoint.proceed();
-        }
-        if (!KeyFormat.isValid(rawKey.get(), properties.getKey().getMaxLength())) {
-            return deadLetter(record, "key value invalid (size/charset)", record.topic(), listenerIdOf(method), rawKey.get());
-        }
-
-        EffectiveKey key = KafkaEffectiveKeyFactory.create(record.topic(), listenerIdOf(method), rawKey.get());
-        String fingerprint = Fingerprint.sha256(key.route(), key.handler(), body);
-
-        IdempotencyEngine engine = engineRegistry.engine(policy.store());
-        EngineDecision decision = engine.before(key, fingerprint, properties.getLockTtl(), policy.onStoreFailure(),
-                policy.whenInProgress(), properties.getWaitTimeout());
-
-        if (decision instanceof EngineDecision.Proceed proceed) {
-            try {
-                Object result = joinPoint.proceed();
-                engine.complete(key, proceed.fenceToken(), CachedResponse.empty(), policy.ttl());
-                return result;
-            } catch (Throwable t) {
-                engine.release(key, proceed.fenceToken());
-                throw t;
-            }
-        }
-        if (decision instanceof EngineDecision.ProceedUnprotected) {
-            // The store is down and the posture is fail-open: run the listener unprotected.
-            return joinPoint.proceed();
-        }
-        if (decision instanceof EngineDecision.Replay || decision instanceof EngineDecision.Unavailable) {
-            log.debug("Duplicate Kafka delivery acked without re-invoking the listener: topic={} listener={} key={}",
-                    key.route(), key.handler(), key.value());
-            return null;
-        }
-        if (decision instanceof EngineDecision.Collision) {
-            return deadLetter(record, "collision (fingerprint mismatch)", key.route(), key.handler(), key.value());
-        }
-        if (decision instanceof EngineDecision.Reject reject && reject.reason() == RejectReason.IN_PROGRESS) {
-            log.debug("Concurrent duplicate delivery acked without invoking the listener: topic={} listener={} key={}",
-                    key.route(), key.handler(), key.value());
-            return null;
-        }
-        if (decision instanceof EngineDecision.FailClosed) {
-            log.warn("Idempotency store unavailable (onStoreFailure=CLOSED) - listener not invoked, message left un-acked "
-                    + "for broker redelivery: topic={} listener={} key={}", key.route(), key.handler(), key.value());
-            throw new IllegalStateException("Idempotency store unavailable (onStoreFailure=CLOSED) for topic=" + record.topic()
-                    + " listener=" + listenerIdOf(method) + " - message not acked, awaiting broker redelivery");
-        }
-        throw new IllegalStateException("Idempotency decision " + decision + " is not yet handled for topic="
-                + record.topic() + " listener=" + listenerIdOf(method));
+        return handle(joinPoint);
     }
 
-    /** Routes {@code record} to its dead-letter topic instead of invoking the listener; always returns {@code null} (acked, skipped). */
-    private Object deadLetter(ConsumerRecord<?, ?> record, String reason, String route, String handler, String value) {
-        log.debug("Idempotency {} - routing to dead-letter: topic={} listener={} key={}", reason, route, handler, value);
-        deadLetterPublisher.publish(record);
-        return null;
+    @Override
+    protected MessageDelivery deliveryOf(ProceedingJoinPoint joinPoint, Method method) {
+        return new KafkaMessageDelivery(consumerRecordOf(joinPoint.getArgs(), method), listenerIdOf(method));
+    }
+
+    /** Kafka seam: reads header/body off a {@link ConsumerRecord} and routes terminal deliveries to the dead-letter topic. */
+    private final class KafkaMessageDelivery implements MessageDelivery {
+
+        private final ConsumerRecord<?, ?> record;
+        private final String listenerId;
+
+        private KafkaMessageDelivery(ConsumerRecord<?, ?> record, String listenerId) {
+            this.record = record;
+            this.listenerId = listenerId;
+        }
+
+        @Override
+        public String destination() {
+            return record.topic();
+        }
+
+        @Override
+        public String listenerId() {
+            return listenerId;
+        }
+
+        @Override
+        public byte[] body() {
+            Object value = record.value();
+            if (value instanceof byte[] bytes) {
+                return bytes;
+            }
+            if (value instanceof String s) {
+                return s.getBytes(StandardCharsets.UTF_8);
+            }
+            return new byte[0];
+        }
+
+        @Override
+        public Optional<String> resolveHeaderKey(String headerName) {
+            return KafkaHeaderKeyStrategy.resolve(record.headers(), headerName);
+        }
+
+        @Override
+        public Object deadLetter(String reason, String value) {
+            log.debug("Idempotency {} - routing to dead-letter: topic={} listener={} key={}", reason, record.topic(), listenerId, value);
+            deadLetterPublisher.publish(record);
+            return null;
+        }
+
+        @Override
+        public Object failClosed() {
+            log.warn("Idempotency store unavailable (onStoreFailure=CLOSED) - listener not invoked, message left un-acked "
+                    + "for broker redelivery: topic={} listener={}", record.topic(), listenerId);
+            throw new IllegalStateException("Idempotency store unavailable (onStoreFailure=CLOSED) for topic=" + record.topic()
+                    + " listener=" + listenerId + " - message not acked, awaiting broker redelivery");
+        }
     }
 
     private static ConsumerRecord<?, ?> consumerRecordOf(Object[] args, Method method) {
@@ -184,17 +140,6 @@ public class KafkaIdempotencyAdvice {
         throw new IllegalStateException(
                 "@Idempotent @KafkaListener method " + method.getDeclaringClass().getSimpleName() + "." + method.getName()
                         + "() must accept a ConsumerRecord<?, ?> parameter for key resolution");
-    }
-
-    private static byte[] bodyOf(ConsumerRecord<?, ?> record) {
-        Object value = record.value();
-        if (value instanceof byte[] bytes) {
-            return bytes;
-        }
-        if (value instanceof String s) {
-            return s.getBytes(StandardCharsets.UTF_8);
-        }
-        return new byte[0];
     }
 
     private static String listenerIdOf(Method method) {

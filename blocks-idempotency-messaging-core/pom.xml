@@ -10,22 +10,19 @@
         <version>0.1.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>blocks-idempotency-messaging-kafka</artifactId>
-    <name>Idempotency :: Messaging :: Kafka</name>
-    <description>Spring AOP advice + key resolution for @Idempotent @KafkaListener methods</description>
+    <artifactId>blocks-idempotency-messaging-core</artifactId>
+    <name>Idempotency :: Messaging :: Core</name>
+    <description>Broker-neutral AOP advice skeleton, key-factory delegation, and startup-validation rules shared by the Kafka and RabbitMQ modules</description>
 
     <dependencies>
         <dependency>
             <groupId>io.adzubla.blocks</groupId>
-            <artifactId>blocks-idempotency-messaging-core</artifactId>
+            <artifactId>blocks-idempotency-core</artifactId>
         </dependency>
 
-        <dependency>
-            <groupId>org.springframework.kafka</groupId>
-            <artifactId>spring-kafka</artifactId>
-        </dependency>
-
-        <!-- @Aspect / @Around advice around @KafkaListener methods -->
+        <!-- @Around advice skeleton (ProceedingJoinPoint / MethodSignature) subclassed
+             by each broker's own @Aspect; spring-aop supplies the runtime proxying the
+             concrete aspects rely on. -->
         <dependency>
             <groupId>org.springframework</groupId>
             <artifactId>spring-aop</artifactId>
@@ -38,13 +35,6 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- Embedded broker for the end-to-end listener test -->
-        <dependency>
-            <groupId>org.springframework.kafka</groupId>
-            <artifactId>spring-kafka-test</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
