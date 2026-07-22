@@ -93,3 +93,35 @@ for this batch. All slices are **AFK**.
 | [040](040-kafka-startup-validation-wait-disabled.md) | Kafka startup validation: reject `whenInProgress=WAIT` | 035 |
 | [041](041-kafka-redis-store-end-to-end.md) | Redis store wired into the Kafka module end-to-end | 035 |
 | [042](042-kafka-postgres-store-end-to-end.md) | Postgres store wired into the Kafka module end-to-end | 035, 034 |
+
+## Batch 6 — messaging extension: RabbitMQ + messaging-core extraction (2026-07-22)
+
+Tracer-bullet slices from `docs/prd/messaging-extension.md`'s Phase 3, first
+half: RabbitMQ built the same way Kafka was (its own module, no shared
+`-messaging-core` yet), then a wide-refactor extraction slice once both
+brokers exist side by side and the broker-agnostic boundary can be drawn
+from two real data points instead of guessed. JMS (the rest of Phase 3) is
+**out of scope** for this batch — see Batch 7. All slices are **AFK**.
+
+| # | Slice | Blocked by |
+|---|-------|-----------|
+| [043](043-rabbitmq-happy-path-dedupe-skip.md) | RabbitMQ happy-path dedupe-skip (foundation) | — |
+| [044](044-rabbitmq-action-mapping-edge-cases.md) | RabbitMQ action-mapping edge cases (collision, concurrent-dup, store-failure, missing/invalid key) | 043 |
+| [045](045-rabbitmq-startup-validation-wait-disabled.md) | RabbitMQ startup validation: reject `whenInProgress=WAIT` | 043 |
+| [046](046-rabbitmq-redis-store-end-to-end.md) | Redis store wired into the RabbitMQ module end-to-end | 043 |
+| [047](047-rabbitmq-postgres-store-end-to-end.md) | Postgres store wired into the RabbitMQ module end-to-end | 043 |
+| [048](048-extract-messaging-core.md) | Extract `blocks-idempotency-messaging-core` (wide refactor) | 043, 044, 045, 046, 047 |
+
+## Batch 7 — messaging extension: JMS (2026-07-22)
+
+The second half of PRD Phase 3: JMS built directly against
+`blocks-idempotency-messaging-core` (slice 048) rather than copying the
+Kafka/RabbitMQ pattern a third time. All slices are **AFK**.
+
+| # | Slice | Blocked by |
+|---|-------|-----------|
+| [049](049-jms-happy-path-dedupe-skip.md) | JMS happy-path dedupe-skip (foundation) | 048 |
+| [050](050-jms-action-mapping-edge-cases.md) | JMS action-mapping edge cases (collision, concurrent-dup, store-failure, missing/invalid key) | 049 |
+| [051](051-jms-startup-validation-wait-disabled.md) | JMS startup validation: reject `whenInProgress=WAIT` | 049 |
+| [052](052-jms-redis-store-end-to-end.md) | Redis store wired into the JMS module end-to-end | 049 |
+| [053](053-jms-postgres-store-end-to-end.md) | Postgres store wired into the JMS module end-to-end | 049 |
