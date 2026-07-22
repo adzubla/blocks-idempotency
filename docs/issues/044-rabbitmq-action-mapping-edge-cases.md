@@ -28,14 +28,14 @@ invoking the listener body.
 
 ## Acceptance criteria
 
-- [ ] `COLLISION` → dead-lettered, not redelivered as-is
-- [ ] Concurrent in-progress duplicate → ack-and-skip, listener not
+- [x] `COLLISION` → dead-lettered, not redelivered as-is
+- [x] Concurrent in-progress duplicate → ack-and-skip, listener not
       re-invoked
-- [ ] `STORE_UNAVAILABLE` → nack-with-backoff (`onStoreFailure=CLOSED`) or
+- [x] `STORE_UNAVAILABLE` → nack-with-backoff (`onStoreFailure=CLOSED`) or
       proceed unprotected (`onStoreFailure=OPEN`), matching the `IdempotencyEngineRegistry`
       policy the same way Kafka's slice 038 did
-- [ ] `KEY_REQUIRED`/`KEY_INVALID` → dead-lettered
-- [ ] Each outcome covered by an integration test against the RabbitMQ
+- [x] `KEY_REQUIRED`/`KEY_INVALID` → dead-lettered
+- [x] Each outcome covered by an integration test against the RabbitMQ
       module from slice 043
 
 ## Blocked by

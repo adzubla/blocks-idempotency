@@ -30,14 +30,14 @@ extraction is slice 048, once RabbitMQ gives it a second real data point.
 
 ## Acceptance criteria
 
-- [ ] `@Idempotent(header=...)` on a `@RabbitListener` method is intercepted
+- [x] `@Idempotent(header=...)` on a `@RabbitListener` method is intercepted
       end-to-end via AOP advice
-- [ ] First delivery executes the listener and completes the record
-- [ ] A repeat delivery with the same key is acked and the listener is
+- [x] First delivery executes the listener and completes the record
+- [x] A repeat delivery with the same key is acked and the listener is
       **not** re-invoked (the effect runs exactly once)
-- [ ] Effective key is scoped by destination (queue) + listener id + key
+- [x] Effective key is scoped by destination (queue) + listener id + key
       value, with `principal` = `NO_PRINCIPAL`
-- [ ] Covered by an embedded/test-broker (or equivalent) end-to-end test,
+- [x] Covered by an embedded/test-broker (or equivalent) end-to-end test,
       plus unit tests for the AOP advice and key resolution
 
 ## Blocked by
