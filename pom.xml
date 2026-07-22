@@ -40,6 +40,7 @@
         <module>blocks-idempotency-messaging-core</module>
         <module>blocks-idempotency-messaging-kafka</module>
         <module>blocks-idempotency-messaging-rabbitmq</module>
+        <module>blocks-idempotency-messaging-jms</module>
     </modules>
 
     <dependencyManagement>
@@ -74,6 +75,11 @@
             <dependency>
                 <groupId>io.adzubla.blocks</groupId>
                 <artifactId>blocks-idempotency-messaging-rabbitmq</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.adzubla.blocks</groupId>
+                <artifactId>blocks-idempotency-messaging-jms</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

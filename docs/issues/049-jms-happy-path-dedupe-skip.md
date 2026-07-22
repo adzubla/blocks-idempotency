@@ -25,15 +25,15 @@ is slices 052/053.
 
 ## Acceptance criteria
 
-- [ ] `@Idempotent(header=...)` on a `@JmsListener` method is intercepted
+- [x] `@Idempotent(header=...)` on a `@JmsListener` method is intercepted
       end-to-end via the shared AOP advice skeleton from `messaging-core`
-- [ ] First delivery executes the listener and completes the record
-- [ ] A repeat delivery with the same key is acked and the listener is
+- [x] First delivery executes the listener and completes the record
+- [x] A repeat delivery with the same key is acked and the listener is
       **not** re-invoked (the effect runs exactly once)
-- [ ] Effective key is scoped by destination (queue/topic) + listener id +
+- [x] Effective key is scoped by destination (queue/topic) + listener id +
       key value, with `principal` = `NO_PRINCIPAL`, via
       `messaging-core`'s shared key-factory delegation pattern
-- [ ] Covered by an embedded-broker (e.g. ActiveMQ Artemis in-VM) end-to-end
+- [x] Covered by an embedded-broker (e.g. ActiveMQ Artemis in-VM) end-to-end
       test, plus unit tests for the AOP advice and key resolution
 
 ## Blocked by
