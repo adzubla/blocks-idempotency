@@ -38,6 +38,7 @@
         <module>blocks-idempotency-store-redis</module>
         <module>blocks-idempotency-store-postgres</module>
         <module>blocks-idempotency-messaging-kafka</module>
+        <module>blocks-idempotency-messaging-rabbitmq</module>
     </modules>
 
     <dependencyManagement>
@@ -62,6 +63,11 @@
             <dependency>
                 <groupId>io.adzubla.blocks</groupId>
                 <artifactId>blocks-idempotency-messaging-kafka</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.adzubla.blocks</groupId>
+                <artifactId>blocks-idempotency-messaging-rabbitmq</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
