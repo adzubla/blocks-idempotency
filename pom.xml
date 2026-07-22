@@ -60,6 +60,11 @@
                 <version>${project.version}</version>
             </dependency>
             <dependency>
+                <groupId>io.adzubla.blocks</groupId>
+                <artifactId>blocks-idempotency-messaging-kafka</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
                 <groupId>org.testcontainers</groupId>
                 <artifactId>testcontainers-bom</artifactId>
                 <version>${testcontainers.version}</version>
