@@ -18,12 +18,12 @@ is redundant given RabbitMQ's own broker-native redelivery.
 
 ## Acceptance criteria
 
-- [ ] A `@RabbitListener` + `@Idempotent(whenInProgress=WAIT)` method fails
+- [x] A `@RabbitListener` + `@Idempotent(whenInProgress=WAIT)` method fails
       application startup with a clear error message
-- [ ] Existing key-strategy/ttl/store startup checks (mirroring
+- [x] Existing key-strategy/ttl/store startup checks (mirroring
       `IdempotentHandlerValidator`) are ported to the RabbitMQ listener scan
-- [ ] `whenInProgress=REJECT` continues to start up cleanly
-- [ ] Covered by a startup-validation test analogous to the Kafka module's
+- [x] `whenInProgress=REJECT` continues to start up cleanly
+- [x] Covered by a startup-validation test analogous to the Kafka module's
 
 ## Blocked by
 
