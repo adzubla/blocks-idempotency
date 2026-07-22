@@ -15,10 +15,10 @@ Redis needs no changes for messaging, since it already keys opaquely off
 
 ## Acceptance criteria
 
-- [ ] Happy-path dedupe-skip works end-to-end against a real Redis instance
-- [ ] Collision, concurrent-duplicate, and store-failure behaviors are
+- [x] Happy-path dedupe-skip works end-to-end against a real Redis instance
+- [x] Collision, concurrent-duplicate, and store-failure behaviors are
       re-verified against Redis
-- [ ] No changes needed to `RedisIdempotencyStore` itself — if something
+- [x] No changes needed to `RedisIdempotencyStore` itself — if something
       does surface, it's captured as a new finding, not silently patched
       around
 

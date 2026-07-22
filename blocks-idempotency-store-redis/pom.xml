@@ -52,6 +52,25 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- Test-only: the RabbitMQ integration this module's Testcontainers
+             end-to-end tests (Slice 046) drive the store through (AOP
+             advice/engine) - not a runtime dependency of the store itself. -->
+        <dependency>
+            <groupId>io.adzubla.blocks</groupId>
+            <artifactId>blocks-idempotency-messaging-rabbitmq</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-rabbitmq</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
