@@ -17,15 +17,26 @@ MVC controller does.
 
 ## Acceptance criteria
 
-- [ ] Happy-path dedupe-skip works end-to-end against a real Postgres
+- [x] Happy-path dedupe-skip works end-to-end against a real Postgres
       instance using the renamed schema
-- [ ] A listener's own database write (via `@Transactional`/plain JDBC on
+- [x] A listener's own database write (via `@Transactional`/plain JDBC on
       the same thread) commits together with the idempotency record on
       success, and rolls back together on failure — same guarantee as HTTP
-- [ ] Native concurrency (a second delivery blocks on the row's conflict
+- [x] Native concurrency (a second delivery blocks on the row's conflict
       rather than polling) is exercised
-- [ ] Covered by an integration test analogous to the HTTP Postgres store
+- [x] Covered by an integration test analogous to the HTTP Postgres store
       suite
+
+## Findings
+
+- `idempotency_record.handler` was `VARCHAR(10)` — sized for HTTP methods
+  (`GET`/`POST`/...) before Slice 034 generalized `handler` to mean "which
+  code processes it" generically (HTTP method *or* Kafka listener id). Any
+  listener id longer than 10 characters (e.g. `orders-listener`) failed
+  every reservation with a Postgres "value too long for type character
+  varying(10)" error — not a latent bug, this slice's happy-path test hit
+  it immediately. Widened to `VARCHAR(255)` (`V1__idempotency_record.sql`,
+  edited in place per Slice 034's note that the library is unreleased).
 
 ## Blocked by
 

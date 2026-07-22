@@ -107,6 +107,21 @@
             <artifactId>testcontainers-redis</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- Test-only: the Kafka integration this module's embedded-Kafka
+             end-to-end tests (Slice 042) drive the store through (AOP
+             advice/engine/dead-letter publishing) - not a runtime dependency
+             of the store itself. -->
+        <dependency>
+            <groupId>io.adzubla.blocks</groupId>
+            <artifactId>blocks-idempotency-messaging-kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
 </project>

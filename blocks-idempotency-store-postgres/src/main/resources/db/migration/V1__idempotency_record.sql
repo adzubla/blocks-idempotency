@@ -9,10 +9,12 @@
 
 CREATE TABLE idempotency_record (
     -- Scope / reservation (operation identity + principal + key value):
-    -- route = where it came in on (HTTP path); handler = which code
-    -- processes it (HTTP method+controller).
+    -- route = where it came in on (HTTP path, Kafka topic); handler = which
+    -- code processes it (HTTP method for HTTP, listener id for Kafka - no
+    -- longer HTTP-method-only since Slice 034 generalized route/handler for
+    -- messaging, so this can't stay sized for "GET"/"POST"/etc).
     route            VARCHAR(512)  NOT NULL,
-    handler          VARCHAR(10)   NOT NULL,
+    handler          VARCHAR(255)  NOT NULL,
     principal        VARCHAR(255)  NOT NULL DEFAULT '',   -- '' = unauthenticated route
     idempotency_key  VARCHAR(255)  NOT NULL,              -- opaque value
 
