@@ -7,6 +7,7 @@ import io.adzubla.blocks.idempotency.store.IdempotencyStore;
 import io.adzubla.blocks.idempotency.store.IdempotencyStoreQualifiers;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
@@ -25,7 +26,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * IdempotentHandlerValidator} enforces for HTTP and the Kafka module's own
  * {@code KafkaIdempotentListenerValidator} enforces for Kafka (no shared
  * helper - the checks are re-implemented directly here, mirroring rather
- * than reusing either), plus one messaging-specific rule from {@code
+ * than reusing either), plus {@link #validateSignature a check that the
+ * method accepts a {@link org.springframework.amqp.core.Message} parameter}
+ * (the advice resolves the key and fingerprint from it, so a POJO/{@code
+ * @Payload}-only listener would otherwise fail only at the first delivery),
+ * plus one messaging-specific rule from {@code
  * docs/adr/0005-messaging-wait-disabled.md}: {@link #validateWhenInProgress
  * whenInProgress=WAIT} is rejected outright - only {@code REJECT} is
  * supported for v1, since blocking a listener container thread in {@code
@@ -90,6 +95,7 @@ public class RabbitIdempotentListenerValidator implements SmartInitializingSingl
             return;
         }
         validateWhenInProgress(method, annotation);
+        validateSignature(method);
         validateKeyStrategy(method, annotation);
         validateTtl(method, annotation);
         validateStore(method, annotation, storesByQualifier);
@@ -117,6 +123,21 @@ public class RabbitIdempotentListenerValidator implements SmartInitializingSingl
                     + "(blocking a listener container thread in store.await() risks the container treating the consumer as "
                     + "stalled) - set whenInProgress=REJECT on @Idempotent or idempotency.default-when-in-progress");
         }
+    }
+
+    private void validateSignature(Method method) {
+        // The advice resolves the key and fingerprint from the raw AMQP Message
+        // (RabbitIdempotencyAdvice.messageOf) - a POJO/@Payload-only listener has
+        // nothing to resolve from, so it would throw at the first delivery. Fail
+        // here at startup instead, matching the fail-fast promise of every other
+        // check in this validator.
+        for (Class<?> parameterType : method.getParameterTypes()) {
+            if (Message.class.isAssignableFrom(parameterType)) {
+                return;
+            }
+        }
+        throw new IllegalStateException(describe(method) + ": must accept a " + Message.class.getName()
+                + " parameter for key resolution (a POJO/@Payload-only @RabbitListener is not supported)");
     }
 
     private void validateKeyStrategy(Method method, Idempotent annotation) {

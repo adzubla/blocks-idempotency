@@ -112,6 +112,16 @@ class RabbitIdempotentListenerValidatorTest {
     }
 
     @Test
+    void listenerWithoutAMessageParameterFailsStartup() {
+        runner.withUserConfiguration(PojoOnlyListener.class).run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .hasMessageContaining("must accept a")
+                    .hasMessageContaining(Message.class.getName());
+        });
+    }
+
+    @Test
     void validConfigurationStartsNormally() {
         runner.withUserConfiguration(ValidListener.class).run(context -> assertThat(context).hasNotFailed());
     }
@@ -181,6 +191,14 @@ class RabbitIdempotentListenerValidatorTest {
         @Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER, store = "postgres")
         @RabbitListener(id = "bad-store", queues = "orders")
         void onMessage(Message message) {
+        }
+    }
+
+    @Component
+    static class PojoOnlyListener {
+        @Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER)
+        @RabbitListener(id = "pojo-only", queues = "orders")
+        void onMessage(String payload) {
         }
     }
 

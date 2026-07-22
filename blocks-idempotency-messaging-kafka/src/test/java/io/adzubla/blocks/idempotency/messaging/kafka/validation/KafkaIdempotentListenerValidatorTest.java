@@ -111,6 +111,16 @@ class KafkaIdempotentListenerValidatorTest {
     }
 
     @Test
+    void listenerWithoutAConsumerRecordParameterFailsStartup() {
+        runner.withUserConfiguration(PojoOnlyListener.class).run(context -> {
+            assertThat(context).hasFailed();
+            assertThat(context.getStartupFailure())
+                    .hasMessageContaining("must accept a")
+                    .hasMessageContaining(ConsumerRecord.class.getName());
+        });
+    }
+
+    @Test
     void validConfigurationStartsNormally() {
         runner.withUserConfiguration(ValidListener.class).run(context -> assertThat(context).hasNotFailed());
     }
@@ -180,6 +190,14 @@ class KafkaIdempotentListenerValidatorTest {
         @Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER, store = "postgres")
         @KafkaListener(id = "bad-store", topics = "orders")
         void onMessage(ConsumerRecord<String, String> record) {
+        }
+    }
+
+    @Component
+    static class PojoOnlyListener {
+        @Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER)
+        @KafkaListener(id = "pojo-only", topics = "orders")
+        void onMessage(String payload) {
         }
     }
 

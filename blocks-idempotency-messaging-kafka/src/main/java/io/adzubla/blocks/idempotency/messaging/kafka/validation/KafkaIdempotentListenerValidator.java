@@ -5,6 +5,7 @@ import io.adzubla.blocks.idempotency.annotation.Idempotent.WhenInProgress;
 import io.adzubla.blocks.idempotency.config.IdempotencyProperties;
 import io.adzubla.blocks.idempotency.store.IdempotencyStore;
 import io.adzubla.blocks.idempotency.store.IdempotencyStoreQualifiers;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.SmartInitializingSingleton;
@@ -25,8 +26,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  * IdempotentHandlerValidator} enforces for HTTP (no shared helper - the
  * checks are re-implemented directly here, mirroring rather than reusing
  * that class, since it's wired to {@code RequestMappingHandlerMapping} and
- * lives in {@code blocks-idempotency-web}), plus one Kafka-specific rule
- * from {@code docs/adr/0005-messaging-wait-disabled.md}: {@link
+ * lives in {@code blocks-idempotency-web}), plus {@link #validateSignature a
+ * check that the method accepts a {@link
+ * org.apache.kafka.clients.consumer.ConsumerRecord} parameter} (the advice
+ * resolves the key and fingerprint from it, so a POJO/{@code @Payload}-only
+ * listener would otherwise fail only at the first delivery), plus one
+ * Kafka-specific rule from {@code docs/adr/0005-messaging-wait-disabled.md}: {@link
  * #validateWhenInProgress whenInProgress=WAIT} is rejected outright - only
  * {@code REJECT} is supported for v1, since blocking a listener container
  * thread in {@code store.await()} risks missing {@code
@@ -89,6 +94,7 @@ public class KafkaIdempotentListenerValidator implements SmartInitializingSingle
             return;
         }
         validateWhenInProgress(method, annotation);
+        validateSignature(method);
         validateKeyStrategy(method, annotation);
         validateTtl(method, annotation);
         validateStore(method, annotation, storesByQualifier);
@@ -116,6 +122,21 @@ public class KafkaIdempotentListenerValidator implements SmartInitializingSingle
                     + "(blocking a listener container thread risks missing max.poll.interval.ms and triggering a partition "
                     + "rebalance) - set whenInProgress=REJECT on @Idempotent or idempotency.default-when-in-progress");
         }
+    }
+
+    private void validateSignature(Method method) {
+        // The advice resolves the key and fingerprint from the raw ConsumerRecord
+        // (KafkaIdempotencyAdvice.consumerRecordOf) - a POJO/@Payload-only listener
+        // has nothing to resolve from, so it would throw at the first delivery. Fail
+        // here at startup instead, matching the fail-fast promise of every other
+        // check in this validator.
+        for (Class<?> parameterType : method.getParameterTypes()) {
+            if (ConsumerRecord.class.isAssignableFrom(parameterType)) {
+                return;
+            }
+        }
+        throw new IllegalStateException(describe(method) + ": must accept a " + ConsumerRecord.class.getName()
+                + " parameter for key resolution (a POJO/@Payload-only @KafkaListener is not supported)");
     }
 
     private void validateKeyStrategy(Method method, Idempotent annotation) {
