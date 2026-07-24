@@ -18,12 +18,12 @@ own broker-native redelivery.
 
 ## Acceptance criteria
 
-- [ ] A `@JmsListener` + `@Idempotent(whenInProgress=WAIT)` method fails
+- [x] A `@JmsListener` + `@Idempotent(whenInProgress=WAIT)` method fails
       application startup with a clear error message
-- [ ] Key-strategy/ttl/store startup checks are ported to the JMS listener
+- [x] Key-strategy/ttl/store startup checks are ported to the JMS listener
       scan via `messaging-core`'s shared rule shape
-- [ ] `whenInProgress=REJECT` continues to start up cleanly
-- [ ] Covered by a startup-validation test analogous to the Kafka/RabbitMQ
+- [x] `whenInProgress=REJECT` continues to start up cleanly
+- [x] Covered by a startup-validation test analogous to the Kafka/RabbitMQ
       modules'
 
 ## Blocked by

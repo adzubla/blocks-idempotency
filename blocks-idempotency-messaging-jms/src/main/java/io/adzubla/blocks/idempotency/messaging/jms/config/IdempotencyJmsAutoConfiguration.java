@@ -5,7 +5,9 @@ import io.adzubla.blocks.idempotency.config.IdempotencyProperties;
 import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
 import io.adzubla.blocks.idempotency.messaging.jms.JmsDeadLetterPublisher;
 import io.adzubla.blocks.idempotency.messaging.jms.JmsIdempotencyAdvice;
+import io.adzubla.blocks.idempotency.messaging.jms.validation.JmsIdempotentListenerValidator;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
@@ -34,6 +36,11 @@ import org.springframework.jms.core.JmsTemplate;
  * can't dead-letter, which only surfaces as a thrown exception the moment a
  * collision actually occurs, rather than blocking every {@code @Idempotent}
  * listener from being registered at all.
+ *
+ * <p>Also registers the {@link JmsIdempotentListenerValidator} (Slice 051)
+ * that fails startup fast on a misconfigured {@code @Idempotent}
+ * {@code @JmsListener} method, including {@code whenInProgress=WAIT}
+ * (ADR 0005) and one whose store qualifier resolves to no bean at all.
  */
 @AutoConfiguration
 @ConditionalOnClass(JmsListener.class)
@@ -52,5 +59,11 @@ public class IdempotencyJmsAutoConfiguration {
     public JmsIdempotencyAdvice jmsIdempotencyAdvice(IdempotencyEngineRegistry engineRegistry, IdempotencyProperties properties,
             JmsDeadLetterPublisher deadLetterPublisher) {
         return new JmsIdempotencyAdvice(engineRegistry, properties, deadLetterPublisher);
+    }
+
+    @Bean
+    public JmsIdempotentListenerValidator jmsIdempotentListenerValidator(ConfigurableListableBeanFactory beanFactory,
+            IdempotencyProperties properties) {
+        return new JmsIdempotentListenerValidator(beanFactory, properties);
     }
 }
