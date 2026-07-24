@@ -21,13 +21,13 @@ translation (slice 048) rather than re-deriving it:
 
 ## Acceptance criteria
 
-- [ ] `COLLISION` → dead-lettered, not redelivered as-is
-- [ ] Concurrent in-progress duplicate → ack-and-skip, listener not
+- [x] `COLLISION` → dead-lettered, not redelivered as-is
+- [x] Concurrent in-progress duplicate → ack-and-skip, listener not
       re-invoked
-- [ ] `STORE_UNAVAILABLE` → nack-with-backoff (`onStoreFailure=CLOSED`) or
+- [x] `STORE_UNAVAILABLE` → nack-with-backoff (`onStoreFailure=CLOSED`) or
       proceed unprotected (`onStoreFailure=OPEN`)
-- [ ] `KEY_REQUIRED`/`KEY_INVALID` → dead-lettered
-- [ ] Each outcome covered by an integration test against the JMS module
+- [x] `KEY_REQUIRED`/`KEY_INVALID` → dead-lettered
+- [x] Each outcome covered by an integration test against the JMS module
       from slice 049, reusing `messaging-core`'s shared mapping logic rather
       than a JMS-local reimplementation
 

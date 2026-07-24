@@ -16,6 +16,8 @@ import jakarta.jms.Topic;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jms.annotation.JmsListener;
 
 import java.lang.reflect.Method;
@@ -31,27 +33,40 @@ import java.util.Optional;
  * plain method argument).
  *
  * <p>The broker-neutral decision skeleton (key resolution, fingerprinting, the
- * reserve/complete/release flow, and the decision table) lives in {@link
- * AbstractMessagingIdempotencyAdvice}, shared with the Kafka and RabbitMQ
- * modules since Slice 048. This class supplies only the JMS-specific seams via
- * a {@link JmsMessageDelivery}: reading the header/body off a {@link Message}.
+ * reserve/complete/release flow, and the full PRD §5 decision table) lives in
+ * {@link AbstractMessagingIdempotencyAdvice}, shared with the Kafka and
+ * RabbitMQ modules since Slice 048. This class supplies only the JMS-specific
+ * seams via a {@link JmsMessageDelivery}: reading the header/body off a {@link
+ * Message}, and the two terminal actions whose mechanism is JMS-specific.
  *
- * <p><b>Slice 049 scope (this foundation):</b> the happy path - {@code Proceed}
- * (execute, then complete with {@code CachedResponse.empty()} - v1 is
- * dedupe-only, see ADR 0004), the completed-duplicate ack-and-skip case, and
- * fail-open ({@code onStoreFailure=OPEN}) pass-through. The terminal actions
- * the shared skeleton delegates to {@link MessageDelivery#deadLetter} /
- * {@link MessageDelivery#failClosed} - collision, missing/invalid key, and
- * fail-closed - are not yet mapped onto a JMS-native primitive and throw a
- * clear "not yet supported" error until Slice 050 (JMS action-mapping edge
- * cases), in the same spirit as the RabbitMQ/Kafka foundation slices, which
- * left their own non-happy-path decisions to a follow-up.
+ * <p><b>Dead-letter</b> (collision, missing/invalid key - PRD §5 terminal
+ * cases no consumer-side retry resolves): unlike RabbitMQ's broker-native
+ * reject-without-requeue, plain JMS has no primitive that skips a delivery
+ * straight to a DLQ ahead of the broker's own redelivery-count-then-DLQ
+ * policy, so - like the Kafka module's app-managed {@code
+ * KafkaDeadLetterPublisher} - the delivery is explicitly republished to its
+ * dead-letter destination via {@link JmsDeadLetterPublisher} and acked/skipped
+ * (not left for the broker's own redelivery loop). <b>Fail-closed</b> ({@code
+ * onStoreFailure=CLOSED} with the store down): transient infrastructure
+ * trouble, not a poison message, so the listener is not invoked and the
+ * delivery is left un-acked (thrown exception, causing a JMS session
+ * rollback) for the broker to redeliver once the store has likely recovered -
+ * "nack-with-backoff", relying entirely on the broker's own
+ * redelivery/backoff policy, same as the Kafka module's fail-closed seam.
+ * {@code onStoreFailure=OPEN} (the default) instead resolves to {@code
+ * ProceedUnprotected} in the shared skeleton.
  */
 @Aspect
 public class JmsIdempotencyAdvice extends AbstractMessagingIdempotencyAdvice {
 
-    public JmsIdempotencyAdvice(IdempotencyEngineRegistry engineRegistry, IdempotencyProperties properties) {
+    private static final Logger log = LoggerFactory.getLogger(JmsIdempotencyAdvice.class);
+
+    private final JmsDeadLetterPublisher deadLetterPublisher;
+
+    public JmsIdempotencyAdvice(IdempotencyEngineRegistry engineRegistry, IdempotencyProperties properties,
+            JmsDeadLetterPublisher deadLetterPublisher) {
         super(engineRegistry, properties);
+        this.deadLetterPublisher = deadLetterPublisher;
     }
 
     @Around("@annotation(io.adzubla.blocks.idempotency.annotation.Idempotent) "
@@ -65,8 +80,8 @@ public class JmsIdempotencyAdvice extends AbstractMessagingIdempotencyAdvice {
         return new JmsMessageDelivery(messageOf(joinPoint.getArgs(), method), listenerIdOf(method));
     }
 
-    /** JMS seam: reads header/body off a {@link Message}. Terminal actions are deferred to Slice 050. */
-    private static final class JmsMessageDelivery implements MessageDelivery {
+    /** JMS seam: reads header/body off a {@link Message} and routes terminal deliveries to the dead-letter destination. */
+    private final class JmsMessageDelivery implements MessageDelivery {
 
         private final Message message;
         private final String listenerId;
@@ -125,24 +140,20 @@ public class JmsIdempotencyAdvice extends AbstractMessagingIdempotencyAdvice {
 
         @Override
         public Object deadLetter(String reason, String value) {
-            throw notYetSupported(reason, value);
+            String destination = destination();
+            log.debug("Idempotency {} - routing to dead-letter destination: destination={} listener={} key={}", reason, destination,
+                    listenerId, value);
+            deadLetterPublisher.publish(message, destination);
+            return null;
         }
 
         @Override
         public Object failClosed() {
-            throw notYetSupported("store unavailable (onStoreFailure=CLOSED)", "n/a");
-        }
-
-        /**
-         * Slice 049 is the happy-path foundation; mapping a terminal delivery onto a JMS-native
-         * primitive (broker redelivery/DLQ) is Slice 050. Until then these paths throw with a clear
-         * message rather than being silently mishandled - matching the RabbitMQ foundation's
-         * "not yet handled" catch-all.
-         */
-        private IllegalStateException notYetSupported(String reason, String value) {
-            return new IllegalStateException("Idempotency " + reason + " is not yet handled for @JmsListener (Slice 049 is "
-                    + "happy-path only; JMS action mapping is Slice 050): destination=" + destination() + " listener=" + listenerId
-                    + " key=" + value);
+            String destination = destination();
+            log.warn("Idempotency store unavailable (onStoreFailure=CLOSED) - listener not invoked, message left un-acked "
+                    + "for broker redelivery: destination={} listener={}", destination, listenerId);
+            throw new IllegalStateException("Idempotency store unavailable (onStoreFailure=CLOSED) for destination=" + destination
+                    + " listener=" + listenerId + " - message not acked, awaiting broker redelivery");
         }
 
         private static JMSRuntimeException wrap(String action, JMSException e) {
