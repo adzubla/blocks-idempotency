@@ -15,15 +15,15 @@ JMS's own synchronous, single-session-thread listener-container model too.
 
 ## Acceptance criteria
 
-- [ ] Happy-path dedupe-skip works end-to-end against a real Postgres
+- [x] Happy-path dedupe-skip works end-to-end against a real Postgres
       instance using the shared `route`/`handler` schema
-- [ ] A listener's own database write (via `@Transactional`/plain JDBC on
+- [x] A listener's own database write (via `@Transactional`/plain JDBC on
       the same thread) commits together with the idempotency record on
       success, and rolls back together on failure — same guarantee as HTTP,
       Kafka, and RabbitMQ
-- [ ] Native concurrency (a second delivery blocks on the row's conflict
+- [x] Native concurrency (a second delivery blocks on the row's conflict
       rather than polling) is exercised
-- [ ] Covered by an integration test analogous to the Kafka/RabbitMQ
+- [x] Covered by an integration test analogous to the Kafka/RabbitMQ
       modules' Postgres suites
 
 ## Blocked by

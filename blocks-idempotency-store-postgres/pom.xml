@@ -151,6 +151,25 @@
             <version>2.0.13</version>
             <scope>test</scope>
         </dependency>
+
+        <!-- Test-only: the JMS integration this module's embedded-Artemis
+             end-to-end tests (Slice 053) drive the store through (AOP
+             advice/engine) - not a runtime dependency of the store itself. -->
+        <dependency>
+            <groupId>io.adzubla.blocks</groupId>
+            <artifactId>blocks-idempotency-messaging-jms</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-artemis</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.activemq</groupId>
+            <artifactId>artemis-jakarta-server</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
 </project>
