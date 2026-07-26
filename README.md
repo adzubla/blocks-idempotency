@@ -86,174 +86,105 @@ same either way, with the differences noted inline (and detailed in
 
 See `CONTEXT.md` for the full glossary and `docs/adr/` for the design rationale.
 
-### Request flow (HTTP)
+### Request/delivery flow
+
+One `IdempotencyEngine`/`IdempotencyStore` decision flow, shared by both
+transports — only the adapter at the edges differs: `IdempotencyInterceptor`
+(HTTP, `web`) or a broker's `@Aspect` extending `AbstractMessagingIdempotencyAdvice`
+(Kafka/RabbitMQ/JMS, `messaging-core`). Each `-->>` step below shows the HTTP
+outcome and, where it differs, the messaging outcome after a slash.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Client
-    participant Filter as IdempotencyFilter
-    participant Interceptor as IdempotencyInterceptor
+    actor Caller as Client / Broker
+    participant Adapter as IdempotencyInterceptor / *IdempotencyAdvice
     participant Registry as IdempotencyEngineRegistry
     participant Engine as IdempotencyEngine
     participant Store as IdempotencyStore
-    participant Handler as Controller Handler
+    participant Handler as Handler / Listener method
 
-    Client->>Filter: HTTP request
-    Filter->>Filter: wrap request/response (buffer body)
-    Filter->>Interceptor: preHandle()
-
-    Interceptor->>Interceptor: resolve @Idempotent policy (store/ttl/onStoreFailure/whenInProgress/keyRequired)
-    Interceptor->>Interceptor: resolve raw key (header or fieldPath)
+    Caller->>Adapter: HTTP request / message delivery
+    Adapter->>Adapter: resolve @Idempotent policy (store/ttl/onStoreFailure/whenInProgress/keyRequired)
+    Adapter->>Adapter: resolve raw key (header or fieldPath)
 
     alt key missing & required
-        Interceptor-->>Client: 400 key_required
+        Adapter-->>Caller: 400 key_required / dead-lettered
     else key invalid (charset/length)
-        Interceptor-->>Client: 400 key_invalid
+        Adapter-->>Caller: 400 key_invalid / dead-lettered
     else key present & valid
-        Interceptor->>Interceptor: build EffectiveKey (method+path+principal+key)
-        Interceptor->>Interceptor: compute fingerprint (method+path+body)
-        Interceptor->>Registry: engine(store qualifier)
-        Registry-->>Interceptor: IdempotencyEngine
+        Adapter->>Adapter: build EffectiveKey (route+principal, or destination+listenerId, +key)
+        Adapter->>Adapter: compute fingerprint (route+body)
+        Adapter->>Registry: engine(store qualifier)
+        Registry-->>Adapter: IdempotencyEngine
 
-        Interceptor->>Engine: before(key, fingerprint, lockTtl, onStoreFailure, whenInProgress, waitTimeout)
+        Adapter->>Engine: before(key, fingerprint, lockTtl, onStoreFailure, whenInProgress, waitTimeout)
         Engine->>Store: reserve(key, fingerprint, lockTtl)
 
         alt store unavailable
             Store-->>Engine: StoreUnavailableException
             alt onStoreFailure=CLOSED
-                Engine-->>Interceptor: FailClosed
-                Interceptor-->>Client: 503 store_unavailable
+                Engine-->>Adapter: FailClosed
+                Adapter-->>Caller: 503 store_unavailable / left un-acked for redelivery
             else onStoreFailure=OPEN
-                Engine-->>Interceptor: ProceedUnprotected
-                Interceptor->>Handler: invoke (unprotected)
-                Handler-->>Client: original response
+                Engine-->>Adapter: ProceedUnprotected
+                Adapter->>Handler: invoke (unprotected)
+                Handler-->>Caller: original response / acked
             end
         else RESERVED (fresh key)
             Store-->>Engine: ReservationResult(RESERVED, fenceToken)
-            Engine-->>Interceptor: Proceed(key, fenceToken)
-            Interceptor->>Handler: invoke handler
-            Handler-->>Interceptor: response captured
+            Engine-->>Adapter: Proceed(key, fenceToken)
+            Adapter->>Handler: invoke
+            Handler-->>Adapter: response captured / returns normally
 
-            alt 2xx response
-                Interceptor->>Engine: complete(key, fenceToken, response, ttl)
+            alt 2xx response (HTTP) or normal return (messaging)
+                Adapter->>Engine: complete(key, fenceToken, response, ttl)
                 Engine->>Store: complete(key, fenceToken, response, ttl)
-                Interceptor-->>Client: original response
+                Adapter-->>Caller: original response / acked
             else non-2xx or exception thrown
-                Interceptor->>Engine: release(key, fenceToken)
+                Adapter->>Engine: release(key, fenceToken)
                 Engine->>Store: release(key, fenceToken)
-                Interceptor-->>Client: original error response
+                Adapter-->>Caller: original error response / exception propagates for redelivery
             end
         else EXISTING record found
             Store-->>Engine: ReservationResult(existing record)
             alt fingerprint mismatch
-                Engine-->>Interceptor: Collision
-                Interceptor-->>Client: 422 collision
+                Engine-->>Adapter: Collision
+                Adapter-->>Caller: 422 collision / dead-lettered
             else existing.completed
-                Engine-->>Interceptor: Replay(cachedResponse) or Unavailable
-                alt response cached
-                    Interceptor-->>Client: 2xx replay (Idempotency-Replayed: true)
-                else response not replayable
-                    Interceptor-->>Client: 409 response_unavailable
+                Engine-->>Adapter: Replay(cachedResponse) or Unavailable
+                alt response cached (HTTP only — messaging never caches, ADR 0004)
+                    Adapter-->>Caller: 2xx replay (Idempotency-Replayed: true)
+                else response not replayable / routine dedupe skip
+                    Adapter-->>Caller: 409 response_unavailable / acked (skipped, not invoked)
                 end
             else still in-progress, whenInProgress=REJECT
-                Engine-->>Interceptor: Reject(IN_PROGRESS, retryAfter)
-                Interceptor-->>Client: 409 in_progress + Retry-After
-            else still in-progress, whenInProgress=WAIT
+                Engine-->>Adapter: Reject(IN_PROGRESS, retryAfter)
+                Adapter-->>Caller: 409 in_progress + Retry-After / acked (skipped, not invoked)
+            else still in-progress, whenInProgress=WAIT (HTTP only — ADR 0005 rejects WAIT at startup for messaging)
                 Engine->>Store: await(key, waitTimeout, pollInterval, pollJitter)
                 Store-->>Engine: completed record / empty / still in-progress
                 alt primary completed
-                    Engine-->>Interceptor: Replay(cachedResponse) or Unavailable
-                    Interceptor-->>Client: 2xx replay or 409 response_unavailable
+                    Engine-->>Adapter: Replay(cachedResponse) or Unavailable
+                    Adapter-->>Caller: 2xx replay or 409 response_unavailable
                 else primary released (error) mid-wait
-                    Engine-->>Interceptor: Reject(RELEASED, retryAfter)
-                    Interceptor-->>Client: 409 released + Retry-After
+                    Engine-->>Adapter: Reject(RELEASED, retryAfter)
+                    Adapter-->>Caller: 409 released + Retry-After
                 else waitTimeout elapsed
-                    Engine-->>Interceptor: Reject(TIMEOUT, retryAfter)
-                    Interceptor-->>Client: 409 timeout + Retry-After
+                    Engine-->>Adapter: Reject(TIMEOUT, retryAfter)
+                    Adapter-->>Caller: 409 timeout + Retry-After
                 end
             end
         end
     end
-
-    Filter->>Filter: copy captured body to real response
-    Filter-->>Client: flush response
 ```
 
-### Delivery flow (messaging)
-
-The broker-neutral decision skeleton lives in `AbstractMessagingIdempotencyAdvice`
-(`messaging-core`); a thin per-broker `@Aspect` (Kafka/RabbitMQ/JMS) supplies only
-how to read the header/body off its own message type and how to dead-letter /
-fail-closed. No response is cached or replayed (ADR 0004) — a duplicate delivery is
-just acked and skipped.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Broker
-    participant Advice as Broker's @Idempotent advice
-    participant Registry as IdempotencyEngineRegistry
-    participant Engine as IdempotencyEngine
-    participant Store as IdempotencyStore
-    participant Listener as Listener method
-
-    Broker->>Advice: deliver message
-    Advice->>Advice: resolve policy (store/ttl/onStoreFailure/whenInProgress=REJECT only)
-    Advice->>Advice: resolve raw key (header/property or fieldPath)
-
-    alt key missing & required, or key invalid
-        Advice->>Advice: dead-letter (broker-specific: republish / reject-without-requeue)
-        Advice-->>Broker: acked (skipped)
-    else key present & valid
-        Advice->>Advice: build EffectiveKey (destination + listenerId + key)
-        Advice->>Advice: compute fingerprint (destination + listenerId + body)
-        Advice->>Registry: engine(store qualifier)
-        Registry-->>Advice: IdempotencyEngine
-
-        Advice->>Engine: before(key, fingerprint, lockTtl, onStoreFailure, whenInProgress=REJECT)
-        Engine->>Store: reserve(key, fingerprint, lockTtl)
-
-        alt store unavailable
-            Store-->>Engine: StoreUnavailableException
-            alt onStoreFailure=CLOSED
-                Engine-->>Advice: FailClosed
-                Advice-->>Broker: fail closed (left un-acked / rejected for redelivery)
-            else onStoreFailure=OPEN
-                Engine-->>Advice: ProceedUnprotected
-                Advice->>Listener: invoke (unprotected)
-                Listener-->>Broker: acked
-            end
-        else RESERVED (fresh key)
-            Store-->>Engine: ReservationResult(RESERVED, fenceToken)
-            Engine-->>Advice: Proceed(key, fenceToken)
-            Advice->>Listener: invoke listener
-            alt listener returns normally
-                Listener-->>Advice: done
-                Advice->>Engine: complete(key, fenceToken, emptyResponse, ttl)
-                Engine->>Store: complete(key, fenceToken, emptyResponse, ttl)
-                Advice-->>Broker: acked
-            else listener throws
-                Advice->>Engine: release(key, fenceToken)
-                Engine->>Store: release(key, fenceToken)
-                Advice-->>Broker: exception propagates (redelivery per broker policy)
-            end
-        else EXISTING record found
-            Store-->>Engine: ReservationResult(existing record)
-            alt fingerprint mismatch
-                Engine-->>Advice: Collision
-                Advice-->>Broker: dead-lettered
-            else completed or still in-progress (dedupe-only, no replay)
-                Engine-->>Advice: Unavailable / Reject(IN_PROGRESS)
-                Advice-->>Broker: acked (skipped, listener not invoked)
-            end
-        end
-    end
-```
-
-`whenInProgress = WAIT` is rejected at startup for a message listener (ADR 0005 —
-blocking a listener container thread risks a Kafka partition rebalance or an
-equivalent broker-side timeout); only `REJECT` is supported.
+HTTP has one extra step this diagram omits for clarity: `IdempotencyFilter` wraps
+the request/response to buffer the body before `IdempotencyInterceptor` runs, and
+copies the captured body back to the real response afterwards — see
+[Messaging listeners](#messaging-listeners) for the messaging-specific mechanics
+(dead-letter publishing, fail-closed semantics per broker) this diagram
+generalizes over.
 
 ## Install
 
@@ -400,7 +331,7 @@ Add `blocks-idempotency-messaging-kafka` / `-rabbitmq` / `-jms` (any combination
 alongside `core` and a store module, then stack `@Idempotent` on a listener method
 the same way you would on a controller handler. Everything in
 [`@Idempotent` reference](#idempotent-reference) above applies, with three
-messaging-specific differences (see [Delivery flow](#delivery-flow-messaging) and
+messaging-specific differences (see [Request/delivery flow](#requestdelivery-flow) and
 ADRs [0004](docs/adr/0004-messaging-dedupe-only-v1-scope.md) /
 [0005](docs/adr/0005-messaging-wait-disabled.md)):
 
