@@ -4,6 +4,7 @@ import io.adzubla.blocks.idempotency.config.IdempotencyProperties;
 import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
 import io.adzubla.blocks.idempotency.messaging.core.AbstractMessagingIdempotencyAdvice;
 import io.adzubla.blocks.idempotency.messaging.core.MessageDelivery;
+import io.adzubla.blocks.idempotency.messaging.core.MessagingListenerId;
 import io.adzubla.blocks.idempotency.messaging.kafka.key.KafkaHeaderKeyStrategy;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.aspectj.lang.ProceedingJoinPoint;
@@ -143,7 +144,6 @@ public class KafkaIdempotencyAdvice extends AbstractMessagingIdempotencyAdvice {
     }
 
     private static String listenerIdOf(Method method) {
-        String id = method.getAnnotation(KafkaListener.class).id();
-        return id.isEmpty() ? method.getDeclaringClass().getName() + "#" + method.getName() : id;
+        return MessagingListenerId.resolve(method.getAnnotation(KafkaListener.class).id(), method);
     }
 }

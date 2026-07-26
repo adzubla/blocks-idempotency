@@ -4,6 +4,7 @@ import io.adzubla.blocks.idempotency.config.IdempotencyProperties;
 import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
 import io.adzubla.blocks.idempotency.messaging.core.AbstractMessagingIdempotencyAdvice;
 import io.adzubla.blocks.idempotency.messaging.core.MessageDelivery;
+import io.adzubla.blocks.idempotency.messaging.core.MessagingListenerId;
 import io.adzubla.blocks.idempotency.messaging.rabbitmq.key.RabbitHeaderKeyStrategy;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
@@ -133,7 +134,6 @@ public class RabbitIdempotencyAdvice extends AbstractMessagingIdempotencyAdvice 
     }
 
     private static String listenerIdOf(Method method) {
-        String id = method.getAnnotation(RabbitListener.class).id();
-        return id.isEmpty() ? method.getDeclaringClass().getName() + "#" + method.getName() : id;
+        return MessagingListenerId.resolve(method.getAnnotation(RabbitListener.class).id(), method);
     }
 }

@@ -4,6 +4,7 @@ import io.adzubla.blocks.idempotency.config.IdempotencyProperties;
 import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
 import io.adzubla.blocks.idempotency.messaging.core.AbstractMessagingIdempotencyAdvice;
 import io.adzubla.blocks.idempotency.messaging.core.MessageDelivery;
+import io.adzubla.blocks.idempotency.messaging.core.MessagingListenerId;
 import io.adzubla.blocks.idempotency.messaging.jms.key.JmsHeaderKeyStrategy;
 import jakarta.jms.BytesMessage;
 import jakarta.jms.Destination;
@@ -173,7 +174,6 @@ public class JmsIdempotencyAdvice extends AbstractMessagingIdempotencyAdvice {
     }
 
     private static String listenerIdOf(Method method) {
-        String id = method.getAnnotation(JmsListener.class).id();
-        return id.isEmpty() ? method.getDeclaringClass().getName() + "#" + method.getName() : id;
+        return MessagingListenerId.resolve(method.getAnnotation(JmsListener.class).id(), method);
     }
 }
