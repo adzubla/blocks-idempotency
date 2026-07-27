@@ -12,16 +12,16 @@ class FingerprintTest {
     void sameInputsProduceTheSameFingerprint() {
         byte[] body = "{\"amount\":10}".getBytes(StandardCharsets.UTF_8);
 
-        String first = Fingerprint.sha256("POST", "/orders", body);
-        String second = Fingerprint.sha256("POST", "/orders", body);
+        String first = Fingerprint.sha256("/orders", "POST", body);
+        String second = Fingerprint.sha256("/orders", "POST", body);
 
         assertThat(first).isEqualTo(second);
     }
 
     @Test
     void differentBodiesProduceDifferentFingerprints() {
-        String withOneBody = Fingerprint.sha256("POST", "/orders", "{\"amount\":10}".getBytes(StandardCharsets.UTF_8));
-        String withAnotherBody = Fingerprint.sha256("POST", "/orders", "{\"amount\":20}".getBytes(StandardCharsets.UTF_8));
+        String withOneBody = Fingerprint.sha256("/orders", "POST", "{\"amount\":10}".getBytes(StandardCharsets.UTF_8));
+        String withAnotherBody = Fingerprint.sha256("/orders", "POST", "{\"amount\":20}".getBytes(StandardCharsets.UTF_8));
 
         assertThat(withOneBody).isNotEqualTo(withAnotherBody);
     }
@@ -30,17 +30,17 @@ class FingerprintTest {
     void differentPathsProduceDifferentFingerprints() {
         byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
 
-        String orders = Fingerprint.sha256("POST", "/orders", body);
-        String invoices = Fingerprint.sha256("POST", "/invoices", body);
+        String orders = Fingerprint.sha256("/orders", "POST", body);
+        String invoices = Fingerprint.sha256("/invoices", "POST", body);
 
         assertThat(orders).isNotEqualTo(invoices);
     }
 
     @Test
     void cosmeticKeyReorderingDoesNotChangeTheFingerprint() {
-        String inOrder = Fingerprint.sha256("POST", "/orders",
+        String inOrder = Fingerprint.sha256("/orders", "POST",
                 "{\"amount\":10,\"currency\":\"USD\"}".getBytes(StandardCharsets.UTF_8));
-        String reordered = Fingerprint.sha256("POST", "/orders",
+        String reordered = Fingerprint.sha256("/orders", "POST",
                 "{\"currency\":\"USD\",\"amount\":10}".getBytes(StandardCharsets.UTF_8));
 
         assertThat(inOrder).isEqualTo(reordered);
@@ -48,9 +48,9 @@ class FingerprintTest {
 
     @Test
     void nestedKeyReorderingDoesNotChangeTheFingerprint() {
-        String inOrder = Fingerprint.sha256("POST", "/orders",
+        String inOrder = Fingerprint.sha256("/orders", "POST",
                 "{\"amount\":10,\"customer\":{\"id\":1,\"name\":\"a\"}}".getBytes(StandardCharsets.UTF_8));
-        String reordered = Fingerprint.sha256("POST", "/orders",
+        String reordered = Fingerprint.sha256("/orders", "POST",
                 "{\"customer\":{\"name\":\"a\",\"id\":1},\"amount\":10}".getBytes(StandardCharsets.UTF_8));
 
         assertThat(inOrder).isEqualTo(reordered);
@@ -58,8 +58,8 @@ class FingerprintTest {
 
     @Test
     void emptyBodyIsHandled() {
-        String first = Fingerprint.sha256("POST", "/orders", new byte[0]);
-        String second = Fingerprint.sha256("POST", "/orders", new byte[0]);
+        String first = Fingerprint.sha256("/orders", "POST", new byte[0]);
+        String second = Fingerprint.sha256("/orders", "POST", new byte[0]);
 
         assertThat(first).isEqualTo(second);
     }
@@ -75,9 +75,9 @@ class FingerprintTest {
      */
     @Test
     void distinctFloatPayloadsRoundingToTheSameDoubleMustNotShareAFingerprint() {
-        String withOneAmount = Fingerprint.sha256("POST", "/payments",
+        String withOneAmount = Fingerprint.sha256("/payments", "POST",
                 "{\"amount\":9007199254740992.0}".getBytes(StandardCharsets.UTF_8));
-        String withAnotherAmount = Fingerprint.sha256("POST", "/payments",
+        String withAnotherAmount = Fingerprint.sha256("/payments", "POST",
                 "{\"amount\":9007199254740993.0}".getBytes(StandardCharsets.UTF_8));
 
         assertThat(withOneAmount).isNotEqualTo(withAnotherAmount);
@@ -91,9 +91,9 @@ class FingerprintTest {
      */
     @Test
     void integerAndFloatSpellingsOfTheSameValueProduceDifferentFingerprints() {
-        String asInteger = Fingerprint.sha256("POST", "/payments",
+        String asInteger = Fingerprint.sha256("/payments", "POST",
                 "{\"amount\":1}".getBytes(StandardCharsets.UTF_8));
-        String asFloat = Fingerprint.sha256("POST", "/payments",
+        String asFloat = Fingerprint.sha256("/payments", "POST",
                 "{\"amount\":1.0}".getBytes(StandardCharsets.UTF_8));
 
         assertThat(asInteger).isNotEqualTo(asFloat);

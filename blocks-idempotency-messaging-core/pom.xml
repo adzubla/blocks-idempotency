@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.adzubla.blocks</groupId>
+        <artifactId>blocks-idempotency-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>blocks-idempotency-messaging-core</artifactId>
+    <name>Idempotency :: Messaging :: Core</name>
+    <description>Broker-neutral AOP advice skeleton, key-factory delegation, and startup-validation rules shared by the Kafka and RabbitMQ modules</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.adzubla.blocks</groupId>
+            <artifactId>blocks-idempotency-core</artifactId>
+        </dependency>
+
+        <!-- @Around advice skeleton (ProceedingJoinPoint / MethodSignature) subclassed
+             by each broker's own @Aspect; spring-aop supplies the runtime proxying the
+             concrete aspects rely on. -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-aop</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.aspectj</groupId>
+            <artifactId>aspectjweaver</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+</project>

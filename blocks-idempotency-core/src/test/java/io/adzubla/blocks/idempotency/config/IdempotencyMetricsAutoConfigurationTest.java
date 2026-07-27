@@ -5,12 +5,11 @@ import io.adzubla.blocks.idempotency.metrics.MicrometerIdempotencyMetrics;
 import io.adzubla.blocks.idempotency.metrics.NoOpIdempotencyMetrics;
 import io.adzubla.blocks.idempotency.store.IdempotencyStore;
 import io.adzubla.blocks.idempotency.store.InMemoryIdempotencyStore;
-import io.adzubla.blocks.idempotency.validation.IdempotentHandlerValidator;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -18,13 +17,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Proves Slice 011's "metrics can be disabled via configuration" acceptance
- * criterion at the wiring level: no {@code @Idempotent} handler is registered
- * in these contexts, so {@link IdempotentHandlerValidator}
- * has nothing to validate and the store bean's qualifier doesn't matter here.
+ * criterion at the wiring level: transport-neutral, so no HTTP handler
+ * validation is involved and the store bean's qualifier doesn't matter here.
  */
 class IdempotencyMetricsAutoConfigurationTest {
 
-    private final WebApplicationContextRunner runner = new WebApplicationContextRunner()
+    private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withUserConfiguration(StoreConfig.class);
 
     @Test

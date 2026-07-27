@@ -86,9 +86,9 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
 
     private static final String UPSERT_RESERVATION = """
             INSERT INTO idempotency_record
-                (http_method, path, principal, idempotency_key, fingerprint, reservation_token, created_at, expires_at)
+                (route, handler, principal, idempotency_key, fingerprint, reservation_token, created_at, expires_at)
             VALUES (?, ?, ?, ?, ?, ?, clock_timestamp(), clock_timestamp() + ?::interval)
-            ON CONFLICT (http_method, path, principal, idempotency_key) DO UPDATE SET
+            ON CONFLICT (route, handler, principal, idempotency_key) DO UPDATE SET
                 fingerprint = EXCLUDED.fingerprint,
                 reservation_token = EXCLUDED.reservation_token,
                 response_status = NULL,
@@ -97,19 +97,19 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
                 created_at = EXCLUDED.created_at,
                 expires_at = EXCLUDED.expires_at
             WHERE idempotency_record.expires_at < clock_timestamp()
-            RETURNING http_method
+            RETURNING route
             """;
 
     private static final String SELECT_RECORD = """
             SELECT fingerprint, response_status, response_headers, response_body
             FROM idempotency_record
-            WHERE http_method = ? AND path = ? AND principal = ? AND idempotency_key = ? AND expires_at > clock_timestamp()
+            WHERE route = ? AND handler = ? AND principal = ? AND idempotency_key = ? AND expires_at > clock_timestamp()
             """;
 
     private static final String COMPLETE = """
             UPDATE idempotency_record
             SET response_status = ?, response_headers = ?::jsonb, response_body = ?, expires_at = clock_timestamp() + ?::interval
-            WHERE http_method = ? AND path = ? AND principal = ? AND idempotency_key = ? AND reservation_token = ?
+            WHERE route = ? AND handler = ? AND principal = ? AND idempotency_key = ? AND reservation_token = ?
             """;
 
     /**
@@ -125,10 +125,10 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
      */
     private static final String TRY_LOCK = """
             INSERT INTO idempotency_record
-                (http_method, path, principal, idempotency_key, fingerprint, reservation_token, created_at, expires_at)
+                (route, handler, principal, idempotency_key, fingerprint, reservation_token, created_at, expires_at)
             VALUES (?, ?, ?, ?, '__await__', '__await__', clock_timestamp(), clock_timestamp())
-            ON CONFLICT (http_method, path, principal, idempotency_key) DO NOTHING
-            RETURNING http_method
+            ON CONFLICT (route, handler, principal, idempotency_key) DO NOTHING
+            RETURNING route
             """;
 
     /** SQLState 55P03 ("lock_not_available") - raised when {@code lock_timeout} is exceeded. */
@@ -412,7 +412,7 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
     }
 
     private static Object[] keyArgs(EffectiveKey key) {
-        return new Object[] {key.method(), key.path(), key.principal(), key.value()};
+        return new Object[] {key.route(), key.handler(), key.principal(), key.value()};
     }
 
     private static Object[] concat(Object[]... parts) {

@@ -36,7 +36,7 @@ class IdempotencyEngineMetricsTest {
 
     @Test
     void replayIncrementsTheReplayCounter() {
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-1");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-1");
         EngineDecision proceed = engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
         String fenceToken = ((EngineDecision.Proceed) proceed).fenceToken();
         engine.complete(key, fenceToken, new CachedResponse(201, Map.of(), "{}".getBytes()), responseTtl);
@@ -48,7 +48,7 @@ class IdempotencyEngineMetricsTest {
 
     @Test
     void collisionIncrementsTheCollisionCounter() {
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-2");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-2");
         engine.before(key, "fp-original", lockTtl, openPosture, rejectMode, waitTimeout);
 
         engine.before(key, "fp-different", lockTtl, openPosture, rejectMode, waitTimeout);
@@ -58,7 +58,7 @@ class IdempotencyEngineMetricsTest {
 
     @Test
     void rejectIncrementsTheConcurrencyCounter() {
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-3");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-3");
         engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
 
         engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
@@ -73,7 +73,7 @@ class IdempotencyEngineMetricsTest {
         // immediate one covered above.
         IdempotencyEngine waitEngine = new IdempotencyEngine(
                 store, Duration.ofMillis(15), Duration.ofMillis(5), new MicrometerIdempotencyMetrics(registry));
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-4");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-4");
         engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
 
         waitEngine.before(key, "fp", lockTtl, openPosture, WhenInProgress.WAIT, Duration.ofMillis(80));
@@ -84,7 +84,7 @@ class IdempotencyEngineMetricsTest {
     @Test
     void failOpenIncrementsTheFailOpenCounter() {
         store.setUnavailable(true);
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-5");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-5");
 
         engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
 
@@ -93,8 +93,8 @@ class IdempotencyEngineMetricsTest {
 
     @Test
     void countersAccumulateAcrossMultipleOccurrencesOfTheSameOutcome() {
-        EffectiveKey key1 = new EffectiveKey("POST", "/orders", "", "key-6");
-        EffectiveKey key2 = new EffectiveKey("POST", "/orders", "", "key-7");
+        EffectiveKey key1 = new EffectiveKey("/orders", "POST", "", "key-6");
+        EffectiveKey key2 = new EffectiveKey("/orders", "POST", "", "key-7");
         engine.before(key1, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
         engine.before(key2, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
 

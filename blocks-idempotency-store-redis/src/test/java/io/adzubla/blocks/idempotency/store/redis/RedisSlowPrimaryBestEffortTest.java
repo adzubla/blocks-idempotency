@@ -50,7 +50,7 @@ class RedisSlowPrimaryBestEffortTest {
         StringRedisTemplate redisTemplate = new StringRedisTemplate(connectionFactory);
         redisTemplate.afterPropertiesSet();
         RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, new ObjectMapper(), PREFIX);
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "slow-1");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "slow-1");
 
         String fenceToken = store.reserve(key, "fp", Duration.ofMillis(50)).fenceToken().orElseThrow();
         // The handler outran lock-ttl: the record key is gone (TTL expiry == key removed).

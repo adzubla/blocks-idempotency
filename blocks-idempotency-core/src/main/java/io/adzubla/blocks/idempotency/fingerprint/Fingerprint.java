@@ -11,7 +11,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
 /**
- * SHA-256 of method + path + the normalized (canonical key-ordered) request
+ * SHA-256 of route + handler + the normalized (canonical key-ordered) request
  * body, used to detect a key reused with a different payload (see
  * {@code CONTEXT.md} — Collision).
  *
@@ -29,10 +29,10 @@ public final class Fingerprint {
     private Fingerprint() {
     }
 
-    public static String sha256(String method, String path, byte[] body) {
+    public static String sha256(String route, String handler, byte[] body) {
         byte[] digest = digestBytes(
-                method.getBytes(StandardCharsets.UTF_8),
-                path.getBytes(StandardCharsets.UTF_8),
+                route.getBytes(StandardCharsets.UTF_8),
+                handler.getBytes(StandardCharsets.UTF_8),
                 normalize(body));
         return HexFormat.of().formatHex(digest);
     }

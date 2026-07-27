@@ -13,36 +13,36 @@ class EffectiveKeyTest {
 
     @Test
     void sameFieldsProduceTheSameDigest() {
-        EffectiveKey first = new EffectiveKey("POST", "/orders", "user-1", "abc");
-        EffectiveKey second = new EffectiveKey("POST", "/orders", "user-1", "abc");
+        EffectiveKey first = new EffectiveKey("/orders", "POST", "user-1", "abc");
+        EffectiveKey second = new EffectiveKey("/orders", "POST", "user-1", "abc");
 
         assertThat(first.digestBytes()).isEqualTo(second.digestBytes());
     }
 
     @Test
     void differentPrincipalsProduceDifferentDigests() {
-        EffectiveKey first = new EffectiveKey("POST", "/orders", "user-1", "abc");
-        EffectiveKey second = new EffectiveKey("POST", "/orders", "user-2", "abc");
+        EffectiveKey first = new EffectiveKey("/orders", "POST", "user-1", "abc");
+        EffectiveKey second = new EffectiveKey("/orders", "POST", "user-2", "abc");
 
         assertThat(first.digestBytes()).isNotEqualTo(second.digestBytes());
     }
 
     @Test
     void differentValuesProduceDifferentDigests() {
-        EffectiveKey first = new EffectiveKey("POST", "/orders", "user-1", "abc");
-        EffectiveKey second = new EffectiveKey("POST", "/orders", "user-1", "xyz");
+        EffectiveKey first = new EffectiveKey("/orders", "POST", "user-1", "abc");
+        EffectiveKey second = new EffectiveKey("/orders", "POST", "user-1", "xyz");
 
         assertThat(first.digestBytes()).isNotEqualTo(second.digestBytes());
     }
 
     @Test
     void digestMatchesTheNulSeparatedSha256Shape() throws NoSuchAlgorithmException {
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "user-1", "abc");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "user-1", "abc");
 
         MessageDigest expected = MessageDigest.getInstance("SHA-256");
-        expected.update("POST".getBytes(StandardCharsets.UTF_8));
-        expected.update((byte) 0);
         expected.update("/orders".getBytes(StandardCharsets.UTF_8));
+        expected.update((byte) 0);
+        expected.update("POST".getBytes(StandardCharsets.UTF_8));
         expected.update((byte) 0);
         expected.update("user-1".getBytes(StandardCharsets.UTF_8));
         expected.update((byte) 0);

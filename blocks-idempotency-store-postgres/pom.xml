@@ -28,6 +28,15 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- Test-only: the HTTP integration this module's MockMvc end-to-end
+             tests drive the store through (filter/interceptor/exception
+             handling) - not a runtime dependency of the store itself. -->
+        <dependency>
+            <groupId>io.adzubla.blocks</groupId>
+            <artifactId>blocks-idempotency-web</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-jdbc</artifactId>
@@ -96,6 +105,69 @@
         <dependency>
             <groupId>com.redis</groupId>
             <artifactId>testcontainers-redis</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Test-only: the Kafka integration this module's embedded-Kafka
+             end-to-end tests (Slice 042) drive the store through (AOP
+             advice/engine/dead-letter publishing) - not a runtime dependency
+             of the store itself. -->
+        <dependency>
+            <groupId>io.adzubla.blocks</groupId>
+            <artifactId>blocks-idempotency-messaging-kafka</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Test-only: the RabbitMQ integration this module's Testcontainers
+             end-to-end tests (Slice 047) drive the store through (AOP
+             advice/engine) - not a runtime dependency of the store itself. -->
+        <dependency>
+            <groupId>io.adzubla.blocks</groupId>
+            <artifactId>blocks-idempotency-messaging-rabbitmq</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-rabbitmq</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- RetryOperationsInterceptor, bounding the flaky/no-transactional
+             listeners' thrown-exception redelivery so those tests' retries
+             don't run forever - RabbitMQ's own equivalent of Kafka's
+             DefaultErrorHandler(FixedBackOff) on the container factory. -->
+        <dependency>
+            <groupId>org.springframework.retry</groupId>
+            <artifactId>spring-retry</artifactId>
+            <version>2.0.13</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Test-only: the JMS integration this module's embedded-Artemis
+             end-to-end tests (Slice 053) drive the store through (AOP
+             advice/engine) - not a runtime dependency of the store itself. -->
+        <dependency>
+            <groupId>io.adzubla.blocks</groupId>
+            <artifactId>blocks-idempotency-messaging-jms</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-artemis</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.activemq</groupId>
+            <artifactId>artemis-jakarta-server</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

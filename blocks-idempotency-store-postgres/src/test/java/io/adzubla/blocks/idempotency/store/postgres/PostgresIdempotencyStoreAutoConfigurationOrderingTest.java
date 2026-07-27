@@ -3,6 +3,7 @@ package io.adzubla.blocks.idempotency.store.postgres;
 import io.adzubla.blocks.idempotency.config.IdempotencyAutoConfiguration;
 import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
 import io.adzubla.blocks.idempotency.web.IdempotencyInterceptor;
+import io.adzubla.blocks.idempotency.web.config.IdempotencyWebAutoConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
@@ -20,26 +21,34 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 /**
- * Regression test: {@link IdempotencyAutoConfiguration}'s {@code
- * EngineConfiguration} is gated on {@code @ConditionalOnBean(IdempotencyStore.class)},
- * and Spring Boot evaluates auto-configurations in alphabetical class-name order
- * unless told otherwise - {@code io.adzubla.blocks.idempotency.config} sorts before {@code
- * io.adzubla.blocks.idempotency.store.postgres}, so without an explicit ordering hint the engine's
- * condition was evaluated before this store's bean existed. The engine/interceptor
- * then silently never got registered: every {@code @Idempotent} endpoint ran
- * completely unprotected, with no startup error to flag it (caught live in the
- * Slice 017 end-to-end suite, {@link io.adzubla.blocks.idempotency.web.PostgresIdempotencyEndToEndTest}).
+ * Regression test: {@link IdempotencyAutoConfiguration} is gated on {@code
+ * @ConditionalOnBean(IdempotencyStore.class)}, and Spring Boot evaluates
+ * auto-configurations in alphabetical class-name order unless told
+ * otherwise - {@code io.adzubla.blocks.idempotency.config} sorts before
+ * {@code io.adzubla.blocks.idempotency.store.postgres}, so without an
+ * explicit ordering hint the engine's condition was evaluated before this
+ * store's bean existed. The engine/interceptor then silently never got
+ * registered: every {@code @Idempotent} endpoint ran completely
+ * unprotected, with no startup error to flag it (caught live in the Slice
+ * 017 end-to-end suite, {@link io.adzubla.blocks.idempotency.web.PostgresIdempotencyEndToEndTest}).
  *
  * <p>{@link PostgresIdempotencyStoreAutoConfiguration}'s {@code
- * @AutoConfigureBefore(IdempotencyAutoConfiguration.class)} fixes the ordering
- * outright, so this asserts the engine and interceptor beans exist even though the two
- * auto-configurations are deliberately listed here in the bug-triggering order.
+ * @AutoConfigureBefore(IdempotencyAutoConfiguration.class)}, and (since ADR
+ * 0006 split HTTP integration into {@code blocks-idempotency-web}) {@link
+ * IdempotencyWebAutoConfiguration}'s {@code
+ * @AutoConfigureAfter(IdempotencyAutoConfiguration.class)} +
+ * {@code @ConditionalOnBean(IdempotencyEngineRegistry.class)}, fix the
+ * ordering outright, so this asserts the engine and interceptor beans exist
+ * even though all three auto-configurations are deliberately listed here in
+ * the bug-triggering order (web and the engine config both before what they
+ * each depend on).
  */
 class PostgresIdempotencyStoreAutoConfigurationOrderingTest {
 
     private final WebApplicationContextRunner runner = new WebApplicationContextRunner()
             .withUserConfiguration(RequiredBeans.class)
             .withConfiguration(AutoConfigurations.of(
+                    IdempotencyWebAutoConfiguration.class,
                     IdempotencyAutoConfiguration.class,
                     PostgresIdempotencyStoreAutoConfiguration.class));
 

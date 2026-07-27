@@ -1,10 +1,11 @@
 # Idempotency for Spring Boot
 
-A drop-in, per-endpoint idempotency mechanism for Spring Boot REST services. Mark a
-handler `@Idempotent`, pick where the key comes from and which store backs it, and
-the library takes care of the rest: caching the first response, rejecting or
-waiting on concurrent duplicates, detecting a key reused for a different payload,
-and degrading sanely if the store goes down.
+A drop-in idempotency mechanism for Spring Boot REST endpoints *and* message
+listeners (Kafka, RabbitMQ, JMS). Mark a handler or listener `@Idempotent`, pick
+where the key comes from and which store backs it, and the library takes care of
+the rest: caching the first response (HTTP) or deduping the delivery (messaging),
+rejecting or waiting on concurrent duplicates, detecting a key reused for a
+different payload, and degrading sanely if the store goes down.
 
 ## Why use this
 
@@ -27,6 +28,12 @@ A repeat request with the same effective key returns the original response
 (status, headers, body) instead of re-executing the handler, flagged with
 `Idempotency-Replayed: true`.
 
+The same annotation also protects a `@KafkaListener`/`@RabbitListener`/`@JmsListener`
+method against redelivery — a broker resending the same message (consumer restart,
+missed ack, redelivery policy) acks and skips the duplicate instead of re-running the
+listener body. See [Messaging listeners](#messaging-listeners) below; the HTTP
+sections above and below cover the `web` module.
+
 **Use it when:**
 - Clients may retry the same request (network timeouts, double-clicks, message redelivery).
 - The operation has a side effect that must not run twice (charge, create, decrement stock).
@@ -34,135 +41,187 @@ A repeat request with the same effective key returns the original response
 **Skip it when:** the operation is naturally idempotent already (e.g. a `PUT` that
 just overwrites state), or is a pure read.
 
+**Backed by Redis or Postgres** — pick per endpoint/listener. Redis is
+best-effort and fast, for effects external to your database (payment gateway
+calls, emails). Postgres is a real exactly-once guarantee for effects that
+write to that same database, by joining the handler's own transaction. Both
+can be registered at once in the same application. See [Stores](#stores) for
+the full comparison.
+
 ## How it works
 
-- **Effective key** — one key per request, resolved by a strategy you choose per
-  endpoint:
-  - `header` — the key comes from a client-supplied header (e.g. `X-Idempotency-Key`). Covers retries/double-clicks from a client that reuses the same key.
-  - `fieldPath` — a JSONPath into the request body (e.g. `$.order.id`). Covers clients you don't control, deduplicated by business identity.
+`blocks-idempotency-core` holds one policy engine and `IdempotencyEngine`/
+`IdempotencyStore` SPI shared by both transports; `web` and the messaging modules
+each adapt it to their own request/delivery shape. The mechanics below are the
+same either way, with the differences noted inline (and detailed in
+[Messaging listeners](#messaging-listeners)):
+
+- **Effective key** — one key per request/delivery, resolved by a strategy you
+  choose per endpoint/listener:
+  - `header` — the key comes from a client-supplied header (HTTP) or broker
+    header/property (messaging), e.g. `X-Idempotency-Key`. Covers retries/double-clicks
+    or broker redelivery of the same message.
+  - `fieldPath` — a JSONPath into the request/message body (e.g. `$.order.id`).
+    Covers callers you don't control, deduplicated by business identity.
 
   Exactly one of the two is required — validated at application startup.
-- **Scope** — endpoint + authenticated principal + key value. The same key value
-  on two different routes, or from two different users, never collides.
-- **Collision** — same key, different body (by a method+path+body fingerprint) →
-  `422`.
-- **Concurrency** — a second request finding the key in-progress either gets an
-  immediate `409` (`whenInProgress = REJECT`, the default) or blocks for the
-  primary's result (`WAIT`).
-- **Caching** — only `2xx` responses are cached. Any error response, or the
-  handler throwing, releases the key so a genuine retry can proceed.
+- **Scope** — route + key value, plus the authenticated principal for HTTP
+  (messaging has no principal equivalent, so it's route/topic/queue + listener id
+  + key value). The same key value on two different routes/listeners, or from two
+  different users, never collides.
+- **Collision** — same key, different body (by a method+route+body fingerprint) →
+  `422` (HTTP) or dead-lettered (messaging).
+- **Concurrency** — a second request/delivery finding the key in-progress either
+  gets an immediate reject (`whenInProgress = REJECT`, the default) or blocks for
+  the primary's result (`WAIT`, HTTP only — see [Messaging listeners](#messaging-listeners)).
+- **Caching** — HTTP: only `2xx` responses are cached; any error response, or the
+  handler throwing, releases the key so a genuine retry can proceed. Messaging is
+  dedupe-only (ADR 0004) — nothing is cached or replayed, a duplicate delivery is
+  just acked and skipped.
 - **Expiration** — a default 24h TTL (configurable). An expired key behaves as a
   brand-new one.
-- **Store failure** — fail-open by default (request goes through unprotected);
-  fail-closed (`503`) is opt-in per endpoint.
+- **Store failure** — fail-open by default (request/delivery goes through
+  unprotected); fail-closed is opt-in per endpoint/listener (`503` for HTTP,
+  message left for broker redelivery for messaging).
 
 See `CONTEXT.md` for the full glossary and `docs/adr/` for the design rationale.
 
-### Request flow
+### Request/delivery flow
+
+One `IdempotencyEngine`/`IdempotencyStore` decision flow, shared by both
+transports — only the adapter at the edges differs: `IdempotencyInterceptor`
+(HTTP, `web`) or a broker's `@Aspect` extending `AbstractMessagingIdempotencyAdvice`
+(Kafka/RabbitMQ/JMS, `messaging-core`). Each `-->>` step below shows the HTTP
+outcome and, where it differs, the messaging outcome after a slash.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Client
-    participant Filter as IdempotencyFilter
-    participant Interceptor as IdempotencyInterceptor
+    actor Caller as Client / Broker
+    participant Adapter as IdempotencyInterceptor / *IdempotencyAdvice
     participant Registry as IdempotencyEngineRegistry
     participant Engine as IdempotencyEngine
     participant Store as IdempotencyStore
-    participant Handler as Controller Handler
+    participant Handler as Handler / Listener method
 
-    Client->>Filter: HTTP request
-    Filter->>Filter: wrap request/response (buffer body)
-    Filter->>Interceptor: preHandle()
-
-    Interceptor->>Interceptor: resolve @Idempotent policy (store/ttl/onStoreFailure/whenInProgress/keyRequired)
-    Interceptor->>Interceptor: resolve raw key (header or fieldPath)
+    Caller->>Adapter: HTTP request / message delivery
+    Adapter->>Adapter: resolve @Idempotent policy (store/ttl/onStoreFailure/whenInProgress/keyRequired)
+    Adapter->>Adapter: resolve raw key (header or fieldPath)
 
     alt key missing & required
-        Interceptor-->>Client: 400 key_required
+        Adapter-->>Caller: 400 key_required / dead-lettered
     else key invalid (charset/length)
-        Interceptor-->>Client: 400 key_invalid
+        Adapter-->>Caller: 400 key_invalid / dead-lettered
     else key present & valid
-        Interceptor->>Interceptor: build EffectiveKey (method+path+principal+key)
-        Interceptor->>Interceptor: compute fingerprint (method+path+body)
-        Interceptor->>Registry: engine(store qualifier)
-        Registry-->>Interceptor: IdempotencyEngine
+        Adapter->>Adapter: build EffectiveKey (route+principal, or destination+listenerId, +key)
+        Adapter->>Adapter: compute fingerprint (route+body)
+        Adapter->>Registry: engine(store qualifier)
+        Registry-->>Adapter: IdempotencyEngine
 
-        Interceptor->>Engine: before(key, fingerprint, lockTtl, onStoreFailure, whenInProgress, waitTimeout)
+        Adapter->>Engine: before(key, fingerprint, lockTtl, onStoreFailure, whenInProgress, waitTimeout)
         Engine->>Store: reserve(key, fingerprint, lockTtl)
 
         alt store unavailable
             Store-->>Engine: StoreUnavailableException
             alt onStoreFailure=CLOSED
-                Engine-->>Interceptor: FailClosed
-                Interceptor-->>Client: 503 store_unavailable
+                Engine-->>Adapter: FailClosed
+                Adapter-->>Caller: 503 store_unavailable / left un-acked for redelivery
             else onStoreFailure=OPEN
-                Engine-->>Interceptor: ProceedUnprotected
-                Interceptor->>Handler: invoke (unprotected)
-                Handler-->>Client: original response
+                Engine-->>Adapter: ProceedUnprotected
+                Adapter->>Handler: invoke (unprotected)
+                Handler-->>Caller: original response / acked
             end
         else RESERVED (fresh key)
             Store-->>Engine: ReservationResult(RESERVED, fenceToken)
-            Engine-->>Interceptor: Proceed(key, fenceToken)
-            Interceptor->>Handler: invoke handler
-            Handler-->>Interceptor: response captured
+            Engine-->>Adapter: Proceed(key, fenceToken)
+            Adapter->>Handler: invoke
+            Handler-->>Adapter: response captured / returns normally
 
-            alt 2xx response
-                Interceptor->>Engine: complete(key, fenceToken, response, ttl)
+            alt 2xx response (HTTP) or normal return (messaging)
+                Adapter->>Engine: complete(key, fenceToken, response, ttl)
                 Engine->>Store: complete(key, fenceToken, response, ttl)
-                Interceptor-->>Client: original response
+                Adapter-->>Caller: original response / acked
             else non-2xx or exception thrown
-                Interceptor->>Engine: release(key, fenceToken)
+                Adapter->>Engine: release(key, fenceToken)
                 Engine->>Store: release(key, fenceToken)
-                Interceptor-->>Client: original error response
+                Adapter-->>Caller: original error response / exception propagates for redelivery
             end
         else EXISTING record found
             Store-->>Engine: ReservationResult(existing record)
             alt fingerprint mismatch
-                Engine-->>Interceptor: Collision
-                Interceptor-->>Client: 422 collision
+                Engine-->>Adapter: Collision
+                Adapter-->>Caller: 422 collision / dead-lettered
             else existing.completed
-                Engine-->>Interceptor: Replay(cachedResponse) or Unavailable
-                alt response cached
-                    Interceptor-->>Client: 2xx replay (Idempotency-Replayed: true)
-                else response not replayable
-                    Interceptor-->>Client: 409 response_unavailable
+                Engine-->>Adapter: Replay(cachedResponse) or Unavailable
+                alt response cached (HTTP only — messaging never caches, ADR 0004)
+                    Adapter-->>Caller: 2xx replay (Idempotency-Replayed: true)
+                else response not replayable / routine dedupe skip
+                    Adapter-->>Caller: 409 response_unavailable / acked (skipped, not invoked)
                 end
             else still in-progress, whenInProgress=REJECT
-                Engine-->>Interceptor: Reject(IN_PROGRESS, retryAfter)
-                Interceptor-->>Client: 409 in_progress + Retry-After
-            else still in-progress, whenInProgress=WAIT
+                Engine-->>Adapter: Reject(IN_PROGRESS, retryAfter)
+                Adapter-->>Caller: 409 in_progress + Retry-After / acked (skipped, not invoked)
+            else still in-progress, whenInProgress=WAIT (HTTP only — ADR 0005 rejects WAIT at startup for messaging)
                 Engine->>Store: await(key, waitTimeout, pollInterval, pollJitter)
                 Store-->>Engine: completed record / empty / still in-progress
                 alt primary completed
-                    Engine-->>Interceptor: Replay(cachedResponse) or Unavailable
-                    Interceptor-->>Client: 2xx replay or 409 response_unavailable
+                    Engine-->>Adapter: Replay(cachedResponse) or Unavailable
+                    Adapter-->>Caller: 2xx replay or 409 response_unavailable
                 else primary released (error) mid-wait
-                    Engine-->>Interceptor: Reject(RELEASED, retryAfter)
-                    Interceptor-->>Client: 409 released + Retry-After
+                    Engine-->>Adapter: Reject(RELEASED, retryAfter)
+                    Adapter-->>Caller: 409 released + Retry-After
                 else waitTimeout elapsed
-                    Engine-->>Interceptor: Reject(TIMEOUT, retryAfter)
-                    Interceptor-->>Client: 409 timeout + Retry-After
+                    Engine-->>Adapter: Reject(TIMEOUT, retryAfter)
+                    Adapter-->>Caller: 409 timeout + Retry-After
                 end
             end
         end
     end
-
-    Filter->>Filter: copy captured body to real response
-    Filter-->>Client: flush response
 ```
+
+HTTP has one extra step this diagram omits for clarity: `IdempotencyFilter` wraps
+the request/response to buffer the body before `IdempotencyInterceptor` runs, and
+copies the captured body back to the real response afterwards — see
+[Messaging listeners](#messaging-listeners) for the messaging-specific mechanics
+(dead-letter publishing, fail-closed semantics per broker) this diagram
+generalizes over.
 
 ## Install
 
-Group id `io.adzubla.blocks`, artifacts `blocks-idempotency-core`,
-`blocks-idempotency-store-redis`, `blocks-idempotency-store-postgres`. Add `core`
-plus whichever store module(s) your endpoints use — each store is an optional
-module so you don't pull in Redis or JDBC you don't need.
+Group id `io.adzubla.blocks`. Artifacts:
+
+| Artifact                             | Purpose                                                                            |
+|---------------------------------------|-------------------------------------------------------------------------------------|
+| `blocks-idempotency-core`             | Transport-neutral: `@Idempotent`, policy engine, `IdempotencyStore` SPI            |
+| `blocks-idempotency-web`              | Spring MVC/Servlet integration (filter, interceptor, exception handling)          |
+| `blocks-idempotency-messaging-core`   | Broker-neutral messaging advice skeleton (pulled in transitively by the three below) |
+| `blocks-idempotency-messaging-kafka`  | `@KafkaListener` integration                                                       |
+| `blocks-idempotency-messaging-rabbitmq` | `@RabbitListener` integration                                                    |
+| `blocks-idempotency-messaging-jms`    | `@JmsListener` integration                                                         |
+| `blocks-idempotency-store-redis`      | Redis-backed `IdempotencyStore`                                                    |
+| `blocks-idempotency-store-postgres`   | Postgres-backed `IdempotencyStore`                                                 |
+
+Add `core` plus whichever transport module(s) (`web` and/or one or more
+`messaging-*`) and store module(s) your application uses — each is optional so
+you don't pull in Kafka, RabbitMQ, JMS, Redis, or JDBC you don't need. A single
+application can mix transports (HTTP endpoints and message listeners side by
+side) and stores (see below).
 
 ```xml
 <dependency>
     <groupId>io.adzubla.blocks</groupId>
     <artifactId>blocks-idempotency-core</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+</dependency>
+<dependency>
+    <groupId>io.adzubla.blocks</groupId>
+    <artifactId>blocks-idempotency-web</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+</dependency>
+<!-- for message listeners instead of/alongside web, add one or more: -->
+<dependency>
+    <groupId>io.adzubla.blocks</groupId>
+    <artifactId>blocks-idempotency-messaging-kafka</artifactId>
     <version>0.1.0-SNAPSHOT</version>
 </dependency>
 <dependency>
@@ -179,6 +238,13 @@ Each store module auto-configures its `IdempotencyStore` bean under a qualifier
 modules can be on the classpath at once: each `@Idempotent(store = ...)` routes
 independently to the store it names, so one application can back some endpoints
 with Redis and others with Postgres.
+
+Each messaging module likewise auto-configures its advice as soon as its
+listener annotation (`@KafkaListener`/`@RabbitListener`/`@JmsListener`) is on the
+classpath and an `IdempotencyEngineRegistry` bean exists (i.e. `core` plus at
+least one store module). All three can be on the classpath at once, alongside
+`web` — the same `@Idempotent` annotation just gets picked up wherever it's
+paired with a listener/handler annotation the corresponding module knows about.
 
 ## `@Idempotent` reference
 
@@ -259,6 +325,90 @@ PrincipalClaimResolver principalClaimResolver() {
 no such bean registered, `DefaultPrincipalClaimResolver` is used, which ignores
 `claim` and always returns `Principal#getName()`.
 
+## Messaging listeners
+
+Add `blocks-idempotency-messaging-kafka` / `-rabbitmq` / `-jms` (any combination)
+alongside `core` and a store module, then stack `@Idempotent` on a listener method
+the same way you would on a controller handler. Everything in
+[`@Idempotent` reference](#idempotent-reference) above applies, with three
+messaging-specific differences (see [Request/delivery flow](#requestdelivery-flow) and
+ADRs [0004](docs/adr/0004-messaging-dedupe-only-v1-scope.md) /
+[0005](docs/adr/0005-messaging-wait-disabled.md)):
+
+- **No response replay** — a duplicate delivery is acked and skipped, not replayed.
+  There's no captured response to hand back to a message listener the way there is
+  to an HTTP client.
+- **`whenInProgress = WAIT` is rejected at startup** — blocking a listener
+  container thread on another delivery's result risks a broker-side timeout
+  (e.g. a Kafka partition rebalance). Only `REJECT` is supported.
+- **Terminal failures are dead-lettered, not turned into an HTTP status** — a
+  missing/invalid key or a fingerprint collision routes the message to a
+  dead-letter topic/queue (Kafka, JMS: republished by the library; RabbitMQ: the
+  broker's own dead-letter config, via a reject-without-requeue) instead of a
+  `422`/`400` response.
+
+The effective key's scope is destination (topic/queue) + listener id + key value —
+there's no HTTP-style authenticated principal to fold in. The listener id is the
+listener annotation's own `id()` if set, else the method's fully-qualified name.
+
+### Kafka
+
+```java
+@Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER)
+@KafkaListener(id = "orders-listener", topics = "orders")
+void onOrderCreated(ConsumerRecord<String, String> record) {
+    orderService.create(record.value());
+}
+```
+
+The listener method must accept a `ConsumerRecord<?, ?>` parameter — the advice
+reads the header and body off it for key resolution and fingerprinting (validated
+at startup). A collision or invalid key republishes to `<topic><idempotency.kafka.dead-letter-suffix>`
+(default `.DLT`) via an optionally-injected `KafkaTemplate`.
+
+```properties
+# suffix appended to a delivery's source topic to form its dead-letter topic
+idempotency.kafka.dead-letter-suffix=.DLT
+```
+
+### RabbitMQ
+
+```java
+@Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER)
+@RabbitListener(id = "orders-listener", queues = "orders")
+void onOrderCreated(org.springframework.amqp.core.Message message) {
+    orderService.create(message.getBody());
+}
+```
+
+The listener method must accept a Spring AMQP `Message` parameter. RabbitMQ
+dead-letters natively: a collision, invalid key, or fail-closed store outage
+throws `AmqpRejectAndDontRequeueException`, and the broker routes the rejected
+message per whatever dead-letter exchange/queue you've configured on the queue
+itself — this module doesn't own that configuration.
+
+### JMS
+
+```java
+@Idempotent(header = "IdempotencyKey")
+@JmsListener(id = "orders-listener", destination = "orders")
+void onOrderCreated(jakarta.jms.Message message) throws JMSException {
+    orderService.create(message.getBody(String.class));
+}
+```
+
+The listener method must accept a `jakarta.jms.Message` parameter. Unlike the HTTP
+default header name, JMS property names must be Java-identifier-like (JMS message
+selector syntax, no hyphens) — use something like `IdempotencyKey` rather than
+`X-Idempotency-Key`. A collision or invalid key republishes to
+`<destination><idempotency.jms.dead-letter-suffix>` (default `.DLQ`) via an
+optionally-injected `JmsTemplate`.
+
+```properties
+# suffix appended to a delivery's source destination to form its dead-letter destination
+idempotency.jms.dead-letter-suffix=.DLQ
+```
+
 ## Stores
 
 |             | Redis                                                                   | Postgres                                                      |
@@ -267,9 +417,12 @@ no such bean registered, `DefaultPrincipalClaimResolver` is used, which ignores
 | Concurrency | Polling (~100ms + jitter)                                               | Native row lock, blocks until the holder commits/rolls back   |
 | Good for    | External or non-transactional effects (calls to other services, emails) | Effects that are themselves a write to this Postgres database |
 
-Store choice is per endpoint, not per application: register both modules and set
-`store` on each `@Idempotent` to pick Redis for one handler and Postgres for
-another in the same service.
+Store choice is per endpoint/listener, not per application: register both
+modules and set `store` on each `@Idempotent` to pick Redis for one handler and
+Postgres for another in the same service. The Postgres store's exactly-once
+guarantee (below) extends to message listeners too — a synchronous,
+single-session-thread `@KafkaListener`/`@RabbitListener`/`@JmsListener` satisfies
+the same thread-bound transaction assumption a synchronous MVC controller does.
 
 ### In-memory store
 
@@ -335,6 +488,10 @@ best-effort caching. Not currently supported with async handlers
 which breaks the thread-bound transaction this store relies on.
 
 ## Status codes at a glance
+
+This section is HTTP-specific (`web` module) — a message listener never returns
+a status code; see [Messaging listeners](#messaging-listeners) for its
+dead-letter/fail-closed/skip outcomes instead.
 
 Every rejecting outcome is thrown by the interceptor as a typed
 `IdempotencyException` rather than written to the response directly, so it

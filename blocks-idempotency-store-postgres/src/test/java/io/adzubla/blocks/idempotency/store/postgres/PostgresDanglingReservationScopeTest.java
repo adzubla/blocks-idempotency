@@ -81,8 +81,8 @@ class PostgresDanglingReservationScopeTest {
     @Disabled("Documents robustness gap: docs/issues/033-postgres-dangling-reservation-scope.md; remove @Disabled to reproduce")
     void completingAFreshReservationDoesNotCommitADanglingOneLeftOnTheSameThread() {
         store = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, new ObjectMapper(), Duration.ofSeconds(2));
-        EffectiveKey dangling = new EffectiveKey("POST", "/orders", "", "dangling-A");
-        EffectiveKey fresh = new EffectiveKey("POST", "/invoices", "", "fresh-B");
+        EffectiveKey dangling = new EffectiveKey("/orders", "POST", "", "dangling-A");
+        EffectiveKey fresh = new EffectiveKey("/invoices", "POST", "", "fresh-B");
 
         // Request 1 reserves A and is never resolved (no complete/release).
         store.reserve(dangling, "fpA", Duration.ofSeconds(30));

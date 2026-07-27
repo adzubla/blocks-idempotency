@@ -34,7 +34,7 @@ class IdempotencyEngineWaitInterruptTest {
     @Disabled("Exposes bug: docs/issues/030-wait-mode-interrupt-uncontrolled-500.md; remove @Disabled to reproduce")
     void interruptDuringWaitDoesNotLeakAnUncontrolledIllegalStateException() {
         InMemoryIdempotencyStore store = new InMemoryIdempotencyStore();
-        EffectiveKey key = new EffectiveKey("POST", "/orders", "", "key-1");
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-1");
         Duration lockTtl = Duration.ofSeconds(30);
         // A primary holds the key IN_PROGRESS, so a same-fingerprint duplicate
         // takes the WAIT path rather than proceeding or colliding.

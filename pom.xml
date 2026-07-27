@@ -34,8 +34,13 @@
 
     <modules>
         <module>blocks-idempotency-core</module>
+        <module>blocks-idempotency-web</module>
         <module>blocks-idempotency-store-redis</module>
         <module>blocks-idempotency-store-postgres</module>
+        <module>blocks-idempotency-messaging-core</module>
+        <module>blocks-idempotency-messaging-kafka</module>
+        <module>blocks-idempotency-messaging-rabbitmq</module>
+        <module>blocks-idempotency-messaging-jms</module>
     </modules>
 
     <dependencyManagement>
@@ -51,6 +56,31 @@
                 <version>${project.version}</version>
                 <type>test-jar</type>
                 <scope>test</scope>
+            </dependency>
+            <dependency>
+                <groupId>io.adzubla.blocks</groupId>
+                <artifactId>blocks-idempotency-web</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.adzubla.blocks</groupId>
+                <artifactId>blocks-idempotency-messaging-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.adzubla.blocks</groupId>
+                <artifactId>blocks-idempotency-messaging-kafka</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.adzubla.blocks</groupId>
+                <artifactId>blocks-idempotency-messaging-rabbitmq</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.adzubla.blocks</groupId>
+                <artifactId>blocks-idempotency-messaging-jms</artifactId>
+                <version>${project.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.testcontainers</groupId>
