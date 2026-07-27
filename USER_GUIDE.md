@@ -70,15 +70,15 @@ you don't pull in Kafka, RabbitMQ, JMS, Redis, or JDBC dependencies you don't
 need. A single application can mix transports (HTTP endpoints and message
 listeners side by side) and stores.
 
-| Artifact | Purpose |
-|---|---|
-| `blocks-idempotency-core` | Required. `@Idempotent`, the policy engine, the `IdempotencyStore` abstraction. |
-| `blocks-idempotency-web` | Add for Spring MVC/Servlet REST endpoints. |
-| `blocks-idempotency-messaging-kafka` | Add for `@KafkaListener` methods. |
-| `blocks-idempotency-messaging-rabbitmq` | Add for `@RabbitListener` methods. |
-| `blocks-idempotency-messaging-jms` | Add for `@JmsListener` methods. |
-| `blocks-idempotency-store-redis` | Add for a Redis-backed store. |
-| `blocks-idempotency-store-postgres` | Add for a Postgres-backed store. |
+| Artifact                                | Purpose                                                                         |
+|-----------------------------------------|---------------------------------------------------------------------------------|
+| `blocks-idempotency-core`               | Required. `@Idempotent`, the policy engine, the `IdempotencyStore` abstraction. |
+| `blocks-idempotency-web`                | Add for Spring MVC/Servlet REST endpoints.                                      |
+| `blocks-idempotency-messaging-kafka`    | Add for `@KafkaListener` methods.                                               |
+| `blocks-idempotency-messaging-rabbitmq` | Add for `@RabbitListener` methods.                                              |
+| `blocks-idempotency-messaging-jms`      | Add for `@JmsListener` methods.                                                 |
+| `blocks-idempotency-store-redis`        | Add for a Redis-backed store.                                                   |
+| `blocks-idempotency-store-postgres`     | Add for a Postgres-backed store.                                                |
 
 ```xml
 <dependency>
@@ -347,7 +347,8 @@ sequenceDiagram
 ```java
 @PostMapping("/orders")
 @Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER)
-public ResponseEntity<Order> createOrder(@RequestBody OrderRequest request) { ... }
+public ResponseEntity<Order> createOrder(@RequestBody OrderRequest request) {
+}
 ```
 
 A repeat request with the same effective key returns the original response
@@ -356,14 +357,14 @@ A repeat request with the same effective key returns the original response
 
 #### Supported `@Idempotent` properties
 
-| Property | Notes |
-|---|---|
-| `header` / `fieldPath` | Exactly one required. |
-| `store` | Which store bean to use; `""` inherits `idempotency.default-store`. |
-| `ttl` | Response cache TTL; `""` inherits `idempotency.default-ttl`. |
-| `keyRequired` | Default `true`; fixed default, does not inherit a global. |
-| `onStoreFailure` | `OPEN`/`CLOSED`/`DEFAULT` (inherits global posture). |
-| `whenInProgress` | `REJECT`/`WAIT`/`DEFAULT` (inherits global posture). Both are supported for HTTP. |
+| Property               | Notes                                                                             |
+|------------------------|-----------------------------------------------------------------------------------|
+| `header` / `fieldPath` | Exactly one required.                                                             |
+| `store`                | Which store bean to use; `""` inherits `idempotency.default-store`.               |
+| `ttl`                  | Response cache TTL; `""` inherits `idempotency.default-ttl`.                      |
+| `keyRequired`          | Default `true`; fixed default, does not inherit a global.                         |
+| `onStoreFailure`       | `OPEN`/`CLOSED`/`DEFAULT` (inherits global posture).                              |
+| `whenInProgress`       | `REJECT`/`WAIT`/`DEFAULT` (inherits global posture). Both are supported for HTTP. |
 
 Web-specific global configuration is `idempotency.scope.principal-enabled` /
 `idempotency.scope.principal-claim` (see
@@ -392,15 +393,15 @@ parsing a body. Only the in-progress-duplicate case additionally carries
 response the library ever writes a body for is a `2xx` replay, which
 reproduces the original captured response verbatim.
 
-| Status | Meaning | Exception | `Idempotency-Reject-Reason` | Other headers | Body |
-|---|---|---|---|---|---|
-| `2xx` | Fresh execution, or replay of a cached response | — | — | `Idempotency-Replayed: true` on replay | Original response body |
-| `409` + `Retry-After` | In-progress duplicate (reject/wait-timeout/released) — safe to retry the same key | `IdempotencyConflictException` | `in_progress`\|`released`\|`timeout` | `Retry-After` | empty |
-| `409` | Effect completed but the response can't be replayed (terminal — don't retry) | `IdempotencyResponseUnavailableException` | `response_unavailable` | none | empty |
-| `422` | Same key, different payload (fingerprint collision) | `IdempotencyCollisionException` | `collision` | none | empty |
-| `400` | Key required but missing | `IdempotencyKeyRequiredException` | `key_required` | none | empty |
-| `400` | Key value too long, or outside the allowed charset | `IdempotencyKeyInvalidException` | `key_invalid` | none | empty |
-| `503` | Store unavailable and `onStoreFailure = CLOSED` | `IdempotencyFailClosedException` | `store_unavailable` | none | empty |
+| Status                | Meaning                                                                           | Exception                                 | `Idempotency-Reject-Reason`          | Other headers                          | Body                   |
+|-----------------------|-----------------------------------------------------------------------------------|-------------------------------------------|--------------------------------------|----------------------------------------|------------------------|
+| `2xx`                 | Fresh execution, or replay of a cached response                                   | —                                         | —                                    | `Idempotency-Replayed: true` on replay | Original response body |
+| `409` + `Retry-After` | In-progress duplicate (reject/wait-timeout/released) — safe to retry the same key | `IdempotencyConflictException`            | `in_progress`\|`released`\|`timeout` | `Retry-After`                          | empty                  |
+| `409`                 | Effect completed but the response can't be replayed (terminal — don't retry)      | `IdempotencyResponseUnavailableException` | `response_unavailable`               | none                                   | empty                  |
+| `422`                 | Same key, different payload (fingerprint collision)                               | `IdempotencyCollisionException`           | `collision`                          | none                                   | empty                  |
+| `400`                 | Key required but missing                                                          | `IdempotencyKeyRequiredException`         | `key_required`                       | none                                   | empty                  |
+| `400`                 | Key value too long, or outside the allowed charset                                | `IdempotencyKeyInvalidException`          | `key_invalid`                        | none                                   | empty                  |
+| `503`                 | Store unavailable and `onStoreFailure = CLOSED`                                   | `IdempotencyFailClosedException`          | `store_unavailable`                  | none                                   | empty                  |
 
 **Overriding error responses.** Because these are ordinary exceptions, your
 own `@ControllerAdvice` can override any single one of them — declare an
@@ -572,13 +573,13 @@ behavior described in the [Web](#51-web) section:
 
 ### 6.1 Overview
 
-| | In-memory | Redis | Postgres |
-|---|---|---|---|
-| Qualifier | *(register yourself)* | `"redis"` | `"postgres"` |
-| Guarantee | Best-effort, single instance | Best-effort | Exactly-once, for effects that write to the same database |
-| TTL mechanism | In-process, `Clock`-driven | Native Redis key TTL | `expires_at` column + a scheduled sweep |
-| Concurrency | In-process lock | Polling (~100ms + jitter) | Native row lock, blocks until the holder commits/rolls back |
-| Production-ready | No — tests/prototypes only | Yes | Yes |
+|                  | In-memory                    | Redis                     | Postgres                                                    |
+|------------------|------------------------------|---------------------------|-------------------------------------------------------------|
+| Qualifier        | *(register yourself)*        | `"redis"`                 | `"postgres"`                                                |
+| Guarantee        | Best-effort, single instance | Best-effort               | Exactly-once, for effects that write to the same database   |
+| TTL mechanism    | In-process, `Clock`-driven   | Native Redis key TTL      | `expires_at` column + a scheduled sweep                     |
+| Concurrency      | In-process lock              | Polling (~100ms + jitter) | Native row lock, blocks until the holder commits/rolls back |
+| Production-ready | No — tests/prototypes only   | Yes                       | Yes                                                         |
 
 Store choice is per endpoint/listener, not per application: register more
 than one store module and set `store` on each `@Idempotent` to pick, say,
