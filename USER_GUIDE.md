@@ -253,93 +253,40 @@ normal duplicate.
 
 One reservation/store decision flow is shared by every transport — only the
 adapter at the edges differs (an HTTP interceptor, or a broker-specific
-advice for Kafka/RabbitMQ/JMS). Each arrow below shows the HTTP outcome and,
-where it differs, the messaging outcome after a slash.
+advice for Kafka/RabbitMQ/JMS). The core idea, stripped of every status code
+and edge case:
 
 ```mermaid
 sequenceDiagram
-    autonumber
     actor Caller as Client / Broker
-    participant Adapter as IdempotencyInterceptor / *IdempotencyAdvice
-    participant Registry as IdempotencyEngineRegistry
-    participant Engine as IdempotencyEngine
+    participant Adapter as Idempotency adapter
     participant Store as IdempotencyStore
-    participant Handler as Handler / Listener method
+    participant Handler as Handler / Listener
 
-    Caller->>Adapter: HTTP request / message delivery
-    Adapter->>Adapter: resolve @Idempotent policy (store/ttl/onStoreFailure/whenInProgress/keyRequired)
-    Adapter->>Adapter: resolve raw key (header or fieldPath)
+    Caller->>Adapter: request / delivery + key
+    Adapter->>Store: reserve(key)
 
-    alt key missing & required
-        Adapter-->>Caller: 400 key_required / dead-lettered
-    else key invalid (charset/length)
-        Adapter-->>Caller: 400 key_invalid / dead-lettered
-    else key present & valid
-        Adapter->>Adapter: build EffectiveKey (route+principal, or destination+listenerId, +key)
-        Adapter->>Adapter: compute fingerprint (route+body)
-        Adapter->>Registry: engine(store qualifier)
-        Registry-->>Adapter: IdempotencyEngine
-
-        Adapter->>Engine: before(key, fingerprint, lockTtl, onStoreFailure, whenInProgress, waitTimeout)
-        Engine->>Store: reserve(key, fingerprint, lockTtl)
-
-        alt store unavailable
-            Store-->>Engine: StoreUnavailableException
-            alt onStoreFailure=CLOSED
-                Engine-->>Adapter: FailClosed
-                Adapter-->>Caller: 503 store_unavailable / left un-acked for redelivery
-            else onStoreFailure=OPEN
-                Engine-->>Adapter: ProceedUnprotected
-                Adapter->>Handler: invoke (unprotected)
-                Handler-->>Caller: original response / acked
-            end
-        else RESERVED (fresh key)
-            Store-->>Engine: ReservationResult(RESERVED, fenceToken)
-            Engine-->>Adapter: Proceed(key, fenceToken)
-            Adapter->>Handler: invoke
-            Handler-->>Adapter: response captured / returns normally
-
-            alt 2xx response (HTTP) or normal return (messaging)
-                Adapter->>Engine: complete(key, fenceToken, response, ttl)
-                Engine->>Store: complete(key, fenceToken, response, ttl)
-                Adapter-->>Caller: original response / acked
-            else non-2xx or exception thrown
-                Adapter->>Engine: release(key, fenceToken)
-                Engine->>Store: release(key, fenceToken)
-                Adapter-->>Caller: original error response / exception propagates for redelivery
-            end
-        else EXISTING record found
-            Store-->>Engine: ReservationResult(existing record)
-            alt fingerprint mismatch
-                Engine-->>Adapter: Collision
-                Adapter-->>Caller: 422 collision / dead-lettered
-            else existing.completed
-                Engine-->>Adapter: Replay(cachedResponse) or Unavailable
-                alt response cached (HTTP only — messaging never caches)
-                    Adapter-->>Caller: 2xx replay (Idempotency-Replayed: true)
-                else response not replayable / routine dedupe skip
-                    Adapter-->>Caller: 409 response_unavailable / acked (skipped, not invoked)
-                end
-            else still in-progress, whenInProgress=REJECT
-                Engine-->>Adapter: Reject(IN_PROGRESS, retryAfter)
-                Adapter-->>Caller: 409 in_progress + Retry-After / acked (skipped, not invoked)
-            else still in-progress, whenInProgress=WAIT (HTTP only)
-                Engine->>Store: await(key, waitTimeout, pollInterval, pollJitter)
-                Store-->>Engine: completed record / empty / still in-progress
-                alt primary completed
-                    Engine-->>Adapter: Replay(cachedResponse) or Unavailable
-                    Adapter-->>Caller: 2xx replay or 409 response_unavailable
-                else primary released (error) mid-wait
-                    Engine-->>Adapter: Reject(RELEASED, retryAfter)
-                    Adapter-->>Caller: 409 released + Retry-After
-                else waitTimeout elapsed
-                    Engine-->>Adapter: Reject(TIMEOUT, retryAfter)
-                    Adapter-->>Caller: 409 timeout + Retry-After
-                end
-            end
-        end
+    alt fresh key
+        Store-->>Adapter: reserved
+        Adapter->>Handler: invoke
+        Handler-->>Adapter: result
+        Adapter->>Store: complete or release
+        Adapter-->>Caller: original response
+    else duplicate, same payload
+        Store-->>Adapter: already seen
+        Adapter-->>Caller: replay cached response / skip (no re-invoke)
+    else duplicate, different payload
+        Store-->>Adapter: fingerprint mismatch
+        Adapter-->>Caller: reject as collision
+    else still in progress
+        Store-->>Adapter: not yet complete
+        Adapter-->>Caller: reject (or wait, HTTP only)
     end
 ```
+
+A complete sequence diagram with the full decision tree — every status code, header, and store-failure branch —
+is in `README.md`.
+
 ## 5. Idempotent entrypoints
 
 ### 5.1. Web
