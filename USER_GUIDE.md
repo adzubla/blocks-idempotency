@@ -520,17 +520,35 @@ behavior described in the [Web](#51-web) section:
 
 ### 6.1 Overview
 
-|                  | In-memory                    | Redis                     | Postgres                                                    |
-|------------------|------------------------------|---------------------------|-------------------------------------------------------------|
-| Qualifier        | *(register yourself)*        | `"redis"`                 | `"postgres"`                                                |
-| Guarantee        | Best-effort, single instance | Best-effort               | Exactly-once, for effects that write to the same database   |
-| TTL mechanism    | In-process, `Clock`-driven   | Native Redis key TTL      | `expires_at` column + a scheduled sweep                     |
-| Concurrency      | In-process lock              | Polling (~100ms + jitter) | Native row lock, blocks until the holder commits/rolls back |
-| Production-ready | No — tests/prototypes only   | Yes                       | Yes                                                         |
+|                  | In-memory                    | Redis                                         | Postgres                                                    |
+|------------------|------------------------------|-----------------------------------------------|-------------------------------------------------------------|
+| Qualifier        | *(register yourself)*        | `"redis"` (`RedisIdempotencyStore.QUALIFIER`) | `"postgres"` (`PostgresIdempotencyStore.QUALIFIER`)         |
+| Guarantee        | Best-effort, single instance | Best-effort                                   | Exactly-once, for effects that write to the same database   |
+| TTL mechanism    | In-process, `Clock`-driven   | Native Redis key TTL                          | `expires_at` column + a scheduled sweep                     |
+| Concurrency      | In-process lock              | Polling (~100ms + jitter)                     | Native row lock, blocks until the holder commits/rolls back |
+| Production-ready | No — tests/prototypes only   | Yes                                           | Yes                                                         |
 
 Store choice is per endpoint/listener, not per application: register more
 than one store module and set `store` on each `@Idempotent` to pick, say,
-Redis for one handler and Postgres for another in the same service.
+Redis for one handler and Postgres for another in the same service. Prefer
+each store's `QUALIFIER` constant over the bare string literal, so a typo
+fails to compile instead of failing at application startup:
+
+```java
+import io.adzubla.blocks.idempotency.store.redis.RedisIdempotencyStore;
+
+@Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER, store = RedisIdempotencyStore.QUALIFIER)
+public ResponseEntity<Receipt> sendEmail(@RequestBody EmailRequest request) {
+}
+```
+
+```java
+import io.adzubla.blocks.idempotency.store.postgres.PostgresIdempotencyStore;
+
+@Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER, store = PostgresIdempotencyStore.QUALIFIER)
+public ResponseEntity<Order> createOrder(@RequestBody OrderRequest request) {
+}
+```
 
 **Fencing tokens.** Every store implementation, whichever one you use,
 guards against the same failure mode: a reservation whose holder has stalled
@@ -555,7 +573,7 @@ or a single-instance prototype.
 
 ### 6.3 Redis
 
-Qualifier `"redis"`. Best-effort: fast, but a Redis blip or eviction can lose
+Qualifier `"redis"` (`RedisIdempotencyStore.QUALIFIER`).Best-effort: fast, but a Redis blip or eviction can lose
 a reservation. Requires `spring-boot-starter-data-redis` and a configured
 `StringRedisTemplate` (standard `spring.data.redis.*` properties). Lifecycle
 rides Redis's own key TTL: reserve holds for `lock-ttl` (~30s by default),
@@ -574,7 +592,7 @@ database.
 
 ### 6.4 Postgres
 
-Qualifier `"postgres"`. Exactly-once *for effects that write to the same
+Qualifier `"postgres"` (`PostgresIdempotencyStore.QUALIFIER`). Exactly-once *for effects that write to the same
 database*: reserving opens the transaction the handler's effect runs in (it
 joins transparently via ordinary `@Transactional` or plain JDBC on the same
 thread); completing commits the response and the effect together; releasing
