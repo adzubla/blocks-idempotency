@@ -502,10 +502,11 @@ void onOrderCreated(jakarta.jms.Message message) throws JMSException {
 }
 ```
 
-The listener method must accept a `jakarta.jms.Message` parameter. Unlike
-the HTTP default header name, JMS property names must be
-Java-identifier-like (JMS message-selector syntax forbids hyphens) — use
-something like `IdempotencyKey` rather than `X-Idempotency-Key`.
+The listener method must accept a `jakarta.jms.Message` parameter.
+
+> Unlike the HTTP default header name, JMS property names must be
+  Java-identifier-like (JMS message-selector syntax forbids hyphens) — use
+  something like `IdempotencyKey` rather than `X-Idempotency-Key`.
 
 #### Supported `@Idempotent` properties
 
@@ -527,6 +528,18 @@ A collision or invalid/missing key republishes the message to
 optionally-injected `JmsTemplate`, then acks/skips the original. An ordinary
 duplicate delivery is acked and skipped without re-invoking the listener.
 See [Shared messaging behavior](#55-shared-messaging-behavior) below.
+
+#### Broker portability
+
+This module is broker-neutral: it depends only on the `jakarta.jms` API and
+Spring's `JmsTemplate`/`@JmsListener` — no vendor-specific classes appear
+anywhere in its main sources. It runs unmodified against any JMS
+3.1-compliant broker (IBM MQ, ActiveMQ Classic or Artemis, etc.)
+
+Which broker your application talks to is entirely your own configuration,
+independent of this library: add that broker's Spring Boot starter and
+`ConnectionFactory` beans the same way you would without `@Idempotent` (for
+IBM MQ, typically `ibm-mq-spring-boot-starter` plus an `MQConnectionFactory`).
 
 ### 5.5. Shared messaging behavior
 
