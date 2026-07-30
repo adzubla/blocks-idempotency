@@ -125,3 +125,24 @@ Kafka/RabbitMQ pattern a third time. All slices are **AFK**.
 | [051](051-jms-startup-validation-wait-disabled.md) | JMS startup validation: reject `whenInProgress=WAIT` | 049 |
 | [052](052-jms-redis-store-end-to-end.md) | Redis store wired into the JMS module end-to-end | 049 |
 | [053](053-jms-postgres-store-end-to-end.md) | Postgres store wired into the JMS module end-to-end | 049 |
+
+## Batch 8 — messaging extension: SQS (2026-07-30)
+
+A fourth transport beyond `docs/prd/messaging-extension.md`'s original
+JMS/RabbitMQ/Kafka scope — the PRD itself doesn't cover SQS, but the
+broker-neutral skeleton it produced (`blocks-idempotency-messaging-core`,
+slice 048) generalizes to it directly. Built on **Spring Cloud AWS 4.1.0**
+(`@SqsListener`), not the raw AWS SDK v2 — the SDK has no annotated
+listener method for the shared AOP advice to intercept, so it wouldn't fit
+this library's architecture or drop cleanly into a Spring Cloud AWS
+application. Sequenced the same way the JMS/RabbitMQ batches were:
+foundation first, then action-mapping edge cases and store wiring as
+follow-ons.
+
+| # | Slice | Blocked by |
+|---|-------|-----------|
+| [054](054-sqs-happy-path-dedupe-skip.md) | SQS happy-path dedupe-skip (foundation) | 048 |
+| [055](055-sqs-action-mapping-edge-cases.md) | SQS action-mapping edge cases (collision, concurrent-dup, store-failure, missing/invalid key) | 054 |
+| [056](056-sqs-startup-validation-wait-disabled.md) | SQS startup validation: reject `whenInProgress=WAIT` | 054 |
+| [057](057-sqs-redis-store-end-to-end.md) | Redis store wired into the SQS module end-to-end | 054 |
+| [058](058-sqs-postgres-store-end-to-end.md) | Postgres store wired into the SQS module end-to-end | 054 |
