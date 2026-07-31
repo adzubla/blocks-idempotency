@@ -9,7 +9,7 @@ The end-to-end spine of an AWS SQS messaging extension, built directly
 against `blocks-idempotency-messaging-core` (slice 048) the same way JMS
 (slice 049) was — no from-scratch broker adapter, no code sharing left to
 a later extraction. New `blocks-idempotency-messaging-sqs` module, on
-**Spring Cloud AWS 4.1.0** (`io.awspring.cloud:spring-cloud-aws-starter-sqs`),
+**Spring Cloud AWS 4.0.2** (`io.awspring.cloud:spring-cloud-aws-starter-sqs`),
 not the raw AWS SDK v2 — `@SqsListener` is the annotation-driven listener
 seam the shared AOP advice needs, and it's what an application already
 consuming SQS via Spring Cloud AWS would already be using (a raw-SDK

@@ -131,7 +131,7 @@ Kafka/RabbitMQ pattern a third time. All slices are **AFK**.
 A fourth transport beyond `docs/prd/messaging-extension.md`'s original
 JMS/RabbitMQ/Kafka scope — the PRD itself doesn't cover SQS, but the
 broker-neutral skeleton it produced (`blocks-idempotency-messaging-core`,
-slice 048) generalizes to it directly. Built on **Spring Cloud AWS 4.1.0**
+slice 048) generalizes to it directly. Built on **Spring Cloud AWS 4.0.2**
 (`@SqsListener`), not the raw AWS SDK v2 — the SDK has no annotated
 listener method for the shared AOP advice to intercept, so it wouldn't fit
 this library's architecture or drop cleanly into a Spring Cloud AWS
