@@ -142,7 +142,7 @@ idempotency.scope.principal-claim=sub
 idempotency.replay.header-name=Idempotency-Replayed
 # headers stripped from a replay; Set-Cookie is always stripped regardless of this list
 idempotency.replay.header-denylist=Date,Set-Cookie,traceparent,tracestate
-# emit counters for replay/collision/concurrency/fail-open outcomes (needs a MeterRegistry)
+# emit counters for replay/collision/concurrency/fail-open/fail-closed/response-unavailable outcomes (needs a MeterRegistry)
 idempotency.metrics.enabled=true
 ```
 
@@ -645,3 +645,60 @@ Reach for **Postgres** when the side effect is itself a write to the same
 database the idempotency record lives in, and you want the two to succeed or
 fail together atomically. Nothing stops you from registering both and
 picking per-endpoint.
+
+## 7. Observability
+
+### 7.1 Configuring metrics
+
+Metrics are emitted through Micrometer, so they show up wherever your
+application already ships meters (Prometheus, CloudWatch, Datadog, ...) with
+no extra wiring beyond having a `MeterRegistry` bean, which Spring Boot
+Actuator provides automatically.
+
+```properties
+# emit counters for replay/collision/concurrency/fail-open/fail-closed/response-unavailable outcomes (needs a MeterRegistry)
+idempotency.metrics.enabled=true
+```
+
+Recording falls back to a no-op implementation — same code path, zero
+overhead, nothing throws — whenever either condition isn't met:
+- `idempotency.metrics.enabled=false` (default `true`), or
+- no `MeterRegistry` bean is on the context (e.g. Actuator isn't on the
+  classpath).
+
+You can also supply your own `IdempotencyMetrics` bean instead of the
+built-in Micrometer one — it wins over auto-configuration automatically
+(`@ConditionalOnMissingBean`), useful if your application already has a
+bespoke metrics pipeline.
+
+Emission is centralized in the transport-neutral engine, not duplicated per
+adapter: every outcome below fires from exactly one call site regardless of
+whether the request came in over HTTP, Kafka, RabbitMQ, or JMS.
+
+### 7.2 The `idempotency.outcomes` counter
+
+One counter, `idempotency.outcomes`, dimensioned by an `outcome` tag rather
+than six separate counter names — sum or group by `outcome` in your
+dashboard/alerting rule of choice.
+
+| `outcome` tag          | Fires when                                                                               | Normal or abnormal?                                               | Operator response                                                                                                                                                                                                                                                                                                                                                                     |
+|------------------------|------------------------------------------------------------------------------------------|-------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `replay`               | A completed record's cached response is replayed instead of re-executing the handler.    | **Normal.** This is the mechanism working as intended.            | None. A sustained *high* rate just means clients/brokers are retrying a lot — worth knowing about network conditions upstream, but not an idempotency problem.                                                                                                                                                                                                                        |
+| `collision`            | The same key showed up with a *different* payload (fingerprint mismatch, `422`).         | **Abnormal.** Always a bug or misuse, never routine.              | Investigate the caller: a client reusing idempotency keys across distinct requests, or a body-field key (`fieldPath`) pointing at a value that isn't actually unique per intent. Not a store or infra problem.                                                                                                                                                                        |
+| `concurrency`          | A concurrent in-progress duplicate was rejected (`409`) or a `WAIT` caller timed out.    | **Expected at some baseline** under legitimate racing retries.    | Watch the *rate*, not raw occurrences. A rising trend suggests handlers are running slower than clients expect (tune `wait-timeout`), or a caller is retrying too aggressively before the first attempt could finish.                                                                                                                                                                 |
+| `fail_open`            | The store was unavailable and `onStoreFailure=OPEN` let the request through unprotected. | **Abnormal — store health incident.**                             | Page/alert. During this window, duplicate side effects are *not* being prevented. Check store connectivity/latency/capacity immediately; this is the metric that tells you protection is currently off.                                                                                                                                                                               |
+| `fail_closed`          | The store was unavailable and `onStoreFailure=CLOSED` rejected the request (`503`).      | **Abnormal — store health incident, with visible client impact.** | Page/alert, same root cause as `fail_open` (store outage) but here clients are seeing failures directly. Check store connectivity/latency/capacity; consider whether `OPEN` is more appropriate for this endpoint's risk profile.                                                                                                                                                     |
+| `response_unavailable` | A completed record exists but its response can't be replayed (`409`, no `Retry-After`).  | **Abnormal if sustained.**                                        | Two causes: the original response exceeded `idempotency.max-body-size` (raise the limit if these are legitimate responses), or — Redis store only — a slow handler outran `lock-ttl` before completing (see [6.3 Redis](#63-redis)); raise `lock-ttl`. Retrying the same key can never succeed once this fires, so this is a signal to fix configuration, not to expect self-healing. |
+
+### 7.3 Logs
+
+Every decision also logs at `DEBUG` (reservation, replay, collision, reject,
+completion, release — each tagged with route/handler/key) for request-level
+tracing, and store-unavailable events log at `WARN` regardless of whether the
+resolved posture was fail-open or fail-closed. The Redis store additionally
+logs a `WARN` when `complete()` silently no-ops because the reservation was
+already gone or superseded (`... completion no-op for ... - reservation gone
+or superseded ...`) — the operator-visible half of the `lock-ttl`-too-short
+scenario described in [6.3 Redis](#63-redis); a rising `response_unavailable`
+count on a Redis-backed endpoint is what you'd correlate this log line
+against.

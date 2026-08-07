@@ -18,12 +18,16 @@ public final class MicrometerIdempotencyMetrics implements IdempotencyMetrics {
     private final Counter collision;
     private final Counter concurrency;
     private final Counter failOpen;
+    private final Counter failClosed;
+    private final Counter responseUnavailable;
 
     public MicrometerIdempotencyMetrics(MeterRegistry registry) {
         this.replay = counter(registry, "replay");
         this.collision = counter(registry, "collision");
         this.concurrency = counter(registry, "concurrency");
         this.failOpen = counter(registry, "fail_open");
+        this.failClosed = counter(registry, "fail_closed");
+        this.responseUnavailable = counter(registry, "response_unavailable");
     }
 
     private static Counter counter(MeterRegistry registry, String outcome) {
@@ -48,5 +52,15 @@ public final class MicrometerIdempotencyMetrics implements IdempotencyMetrics {
     @Override
     public void recordFailOpen() {
         failOpen.increment();
+    }
+
+    @Override
+    public void recordFailClosed() {
+        failClosed.increment();
+    }
+
+    @Override
+    public void recordResponseUnavailable() {
+        responseUnavailable.increment();
     }
 }

@@ -134,6 +134,7 @@ public class IdempotencyEngine {
             return new EngineDecision.Replay(response);
         }
         log.debug("Idempotency response unavailable (not replayable): {} {} key={}", key.route(), key.handler(), key.value());
+        metrics.recordResponseUnavailable();
         return new EngineDecision.Unavailable();
     }
 
@@ -152,6 +153,7 @@ public class IdempotencyEngine {
     private EngineDecision applyStoreFailurePosture(EffectiveKey key, OnStoreFailure onStoreFailure, StoreUnavailableException cause) {
         if (onStoreFailure == OnStoreFailure.CLOSED) {
             log.warn("Idempotency store unavailable for {} {} - failing closed (503)", key.route(), key.handler(), cause);
+            metrics.recordFailClosed();
             return new EngineDecision.FailClosed();
         }
         log.warn("Idempotency store unavailable for {} {} - failing open (unprotected)", key.route(), key.handler(), cause);

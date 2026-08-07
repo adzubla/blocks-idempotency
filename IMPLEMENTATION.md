@@ -295,7 +295,7 @@ idempotency.scope.principal-claim=sub
 idempotency.replay.header-name=Idempotency-Replayed
 # headers stripped from a replay; Set-Cookie is always stripped regardless of this list
 idempotency.replay.header-denylist=Date,Set-Cookie,traceparent,tracestate
-# emit counters for replay/collision/concurrency/fail-open outcomes (needs a MeterRegistry)
+# emit counters for replay/collision/concurrency/fail-open/fail-closed/response-unavailable outcomes (needs a MeterRegistry)
 idempotency.metrics.enabled=true
 ```
 

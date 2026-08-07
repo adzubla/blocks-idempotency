@@ -101,5 +101,13 @@ class IdempotencyMetricsAutoConfigurationTest {
         @Override
         public void recordFailOpen() {
         }
+
+        @Override
+        public void recordFailClosed() {
+        }
+
+        @Override
+        public void recordResponseUnavailable() {
+        }
     }
 }

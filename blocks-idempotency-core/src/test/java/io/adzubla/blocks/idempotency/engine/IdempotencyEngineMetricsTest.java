@@ -16,9 +16,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Proves Slice 011's "counters increment for replay, collision (422),
- * concurrency (409), and fail-open" end-to-end through {@link
- * IdempotencyEngine#before}, using a real {@link SimpleMeterRegistry} rather
- * than a fake recorder.
+ * concurrency (409), fail-open, fail-closed, and response-unavailable"
+ * end-to-end through {@link IdempotencyEngine#before}, using a real {@link
+ * SimpleMeterRegistry} rather than a fake recorder.
  */
 class IdempotencyEngineMetricsTest {
 
@@ -89,6 +89,28 @@ class IdempotencyEngineMetricsTest {
         engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
 
         assertThat(counterValue("fail_open")).isEqualTo(1.0);
+    }
+
+    @Test
+    void failClosedIncrementsTheFailClosedCounter() {
+        store.setUnavailable(true);
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-8");
+
+        engine.before(key, "fp", lockTtl, OnStoreFailure.CLOSED, rejectMode, waitTimeout);
+
+        assertThat(counterValue("fail_closed")).isEqualTo(1.0);
+    }
+
+    @Test
+    void completedButNotReplayableIncrementsTheResponseUnavailableCounter() {
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-9");
+        EngineDecision proceed = engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
+        String fenceToken = ((EngineDecision.Proceed) proceed).fenceToken();
+        engine.complete(key, fenceToken, CachedResponse.empty(), responseTtl);
+
+        engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
+
+        assertThat(counterValue("response_unavailable")).isEqualTo(1.0);
     }
 
     @Test
