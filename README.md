@@ -679,7 +679,14 @@ whether the request came in over HTTP, Kafka, RabbitMQ, or JMS.
 
 One counter, `idempotency.outcomes`, dimensioned by an `outcome` tag rather
 than six separate counter names — sum or group by `outcome` in your
-dashboard/alerting rule of choice.
+dashboard/alerting rule of choice. It's also tagged with `route` and
+`handler` (the same identity that appears in the logs — request path/HTTP
+method for web, destination/listener id for messaging), so you can attribute
+an outcome to a specific `@Idempotent` method instead of only seeing an
+application-wide total; group by `route`+`handler` to find *which* endpoint
+is producing a rising `collision` or `response_unavailable` rate. The raw key
+value itself is never a tag — that's unbounded, and would blow up cardinality
+the way route/handler (bounded by the number of `@Idempotent` methods) don't.
 
 | `outcome` tag          | Fires when                                                                               | Normal or abnormal?                                               | Operator response                                                                                                                                                                                                                                                                                                                                                                     |
 |------------------------|------------------------------------------------------------------------------------------|-------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|

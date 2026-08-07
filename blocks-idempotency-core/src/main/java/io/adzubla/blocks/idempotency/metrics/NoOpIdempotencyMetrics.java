@@ -15,26 +15,26 @@ public final class NoOpIdempotencyMetrics implements IdempotencyMetrics {
     }
 
     @Override
-    public void recordReplay() {
+    public void recordReplay(String route, String handler) {
     }
 
     @Override
-    public void recordCollision() {
+    public void recordCollision(String route, String handler) {
     }
 
     @Override
-    public void recordConcurrency() {
+    public void recordConcurrency(String route, String handler) {
     }
 
     @Override
-    public void recordFailOpen() {
+    public void recordFailOpen(String route, String handler) {
     }
 
     @Override
-    public void recordFailClosed() {
+    public void recordFailClosed(String route, String handler) {
     }
 
     @Override
-    public void recordResponseUnavailable() {
+    public void recordResponseUnavailable(String route, String handler) {
     }
 }

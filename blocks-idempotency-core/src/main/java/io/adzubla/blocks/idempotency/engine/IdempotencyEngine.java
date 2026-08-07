@@ -130,34 +130,34 @@ public class IdempotencyEngine {
     private EngineDecision decisionForCompleted(EffectiveKey key, CachedResponse response) {
         if (response != null && response.hasBody()) {
             log.debug("Replaying cached response for idempotency key: {} {} key={}", key.route(), key.handler(), key.value());
-            metrics.recordReplay();
+            metrics.recordReplay(key.route(), key.handler());
             return new EngineDecision.Replay(response);
         }
         log.debug("Idempotency response unavailable (not replayable): {} {} key={}", key.route(), key.handler(), key.value());
-        metrics.recordResponseUnavailable();
+        metrics.recordResponseUnavailable(key.route(), key.handler());
         return new EngineDecision.Unavailable();
     }
 
     private EngineDecision collision(EffectiveKey key) {
         log.debug("Idempotency collision (fingerprint mismatch): {} {} key={}", key.route(), key.handler(), key.value());
-        metrics.recordCollision();
+        metrics.recordCollision(key.route(), key.handler());
         return new EngineDecision.Collision();
     }
 
     private EngineDecision reject(EffectiveKey key, RejectReason reason, Duration retryAfter) {
         log.debug("Rejecting concurrent duplicate: {} {} key={} reason={}", key.route(), key.handler(), key.value(), reason.wireValue());
-        metrics.recordConcurrency();
+        metrics.recordConcurrency(key.route(), key.handler());
         return new EngineDecision.Reject(reason, retryAfter);
     }
 
     private EngineDecision applyStoreFailurePosture(EffectiveKey key, OnStoreFailure onStoreFailure, StoreUnavailableException cause) {
         if (onStoreFailure == OnStoreFailure.CLOSED) {
             log.warn("Idempotency store unavailable for {} {} - failing closed (503)", key.route(), key.handler(), cause);
-            metrics.recordFailClosed();
+            metrics.recordFailClosed(key.route(), key.handler());
             return new EngineDecision.FailClosed();
         }
         log.warn("Idempotency store unavailable for {} {} - failing open (unprotected)", key.route(), key.handler(), cause);
-        metrics.recordFailOpen();
+        metrics.recordFailOpen(key.route(), key.handler());
         return new EngineDecision.ProceedUnprotected();
     }
 

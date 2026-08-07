@@ -10,20 +10,27 @@ package io.adzubla.blocks.idempotency.metrics;
  * Retry-After} - crash window or a response over {@code max-body-size}).
  * The last two aren't in the original PRD list but share the same
  * store-failure-posture / completed-record branches as the four that are.
- * Implementations may no-op when metrics are disabled ({@code
+ *
+ * <p>Every method takes {@code route} and {@code handler} - the same identity
+ * an {@link io.adzubla.blocks.idempotency.model.EffectiveKey} carries, minus
+ * the principal/key value (too high-cardinality for a metric tag) - so an
+ * outcome can be attributed to a specific endpoint/listener rather than only
+ * the aggregate across the whole application.
+ *
+ * <p>Implementations may no-op when metrics are disabled ({@code
  * idempotency.metrics.enabled=false}) or no meter registry is available.
  */
 public interface IdempotencyMetrics {
 
-    void recordReplay();
+    void recordReplay(String route, String handler);
 
-    void recordCollision();
+    void recordCollision(String route, String handler);
 
-    void recordConcurrency();
+    void recordConcurrency(String route, String handler);
 
-    void recordFailOpen();
+    void recordFailOpen(String route, String handler);
 
-    void recordFailClosed();
+    void recordFailClosed(String route, String handler);
 
-    void recordResponseUnavailable();
+    void recordResponseUnavailable(String route, String handler);
 }

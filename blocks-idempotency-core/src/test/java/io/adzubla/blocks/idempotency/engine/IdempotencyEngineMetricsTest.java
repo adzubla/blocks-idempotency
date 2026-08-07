@@ -18,12 +18,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Proves Slice 011's "counters increment for replay, collision (422),
  * concurrency (409), fail-open, fail-closed, and response-unavailable"
  * end-to-end through {@link IdempotencyEngine#before}, using a real {@link
- * SimpleMeterRegistry} rather than a fake recorder.
+ * SimpleMeterRegistry} rather than a fake recorder. Also proves each counter
+ * is attributable to a specific route/handler, not just an application-wide
+ * aggregate.
  */
 class IdempotencyEngineMetricsTest {
 
     private static final String METRIC_NAME = "idempotency.outcomes";
     private static final String TAG_OUTCOME = "outcome";
+    private static final String TAG_ROUTE = "route";
+    private static final String TAG_HANDLER = "handler";
 
     private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
     private final InMemoryIdempotencyStore store = new InMemoryIdempotencyStore();
@@ -126,7 +130,24 @@ class IdempotencyEngineMetricsTest {
         assertThat(counterValue("concurrency")).isEqualTo(2.0);
     }
 
+    @Test
+    void collisionsOnDifferentRoutesAreAttributedSeparately() {
+        EffectiveKey ordersKey = new EffectiveKey("/orders", "POST", "", "key-10");
+        EffectiveKey refundsKey = new EffectiveKey("/refunds", "POST", "", "key-11");
+        engine.before(ordersKey, "fp-original", lockTtl, openPosture, rejectMode, waitTimeout);
+        engine.before(refundsKey, "fp-original", lockTtl, openPosture, rejectMode, waitTimeout);
+
+        engine.before(ordersKey, "fp-different", lockTtl, openPosture, rejectMode, waitTimeout);
+
+        assertThat(counterValue("collision", "/orders", "POST")).isEqualTo(1.0);
+        assertThat(registry.find(METRIC_NAME).tag(TAG_OUTCOME, "collision").tag(TAG_ROUTE, "/refunds").counter()).isNull();
+    }
+
     private double counterValue(String outcome) {
         return registry.get(METRIC_NAME).tag(TAG_OUTCOME, outcome).counter().count();
+    }
+
+    private double counterValue(String outcome, String route, String handler) {
+        return registry.get(METRIC_NAME).tag(TAG_OUTCOME, outcome).tag(TAG_ROUTE, route).tag(TAG_HANDLER, handler).counter().count();
     }
 }

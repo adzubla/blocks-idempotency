@@ -87,27 +87,27 @@ class IdempotencyMetricsAutoConfigurationTest {
     /** A distinct implementation - neither {@link MicrometerIdempotencyMetrics} nor {@link NoOpIdempotencyMetrics} - to prove identity, not just fallback behavior. */
     static class CustomIdempotencyMetrics implements IdempotencyMetrics {
         @Override
-        public void recordReplay() {
+        public void recordReplay(String route, String handler) {
         }
 
         @Override
-        public void recordCollision() {
+        public void recordCollision(String route, String handler) {
         }
 
         @Override
-        public void recordConcurrency() {
+        public void recordConcurrency(String route, String handler) {
         }
 
         @Override
-        public void recordFailOpen() {
+        public void recordFailOpen(String route, String handler) {
         }
 
         @Override
-        public void recordFailClosed() {
+        public void recordFailClosed(String route, String handler) {
         }
 
         @Override
-        public void recordResponseUnavailable() {
+        public void recordResponseUnavailable(String route, String handler) {
         }
     }
 }
