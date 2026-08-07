@@ -160,8 +160,16 @@ public class RedisIdempotencyStore implements IdempotencyStore {
     public void complete(EffectiveKey key, String fenceToken, CachedResponse response, Duration responseTtl) {
         boolean hasBody = response.hasBody();
         String bodyEncoded = hasBody ? Base64.getEncoder().encodeToString(response.body()) : "";
-        guarded(() -> redis.execute(COMPLETE_SCRIPT, List.of(redisKey(key)), fenceToken, String.valueOf(response.status()),
+        Long completed = guarded(() -> redis.execute(COMPLETE_SCRIPT, List.of(redisKey(key)), fenceToken, String.valueOf(response.status()),
                 toJson(response.headers()), bodyEncoded, hasBody ? "1" : "0", String.valueOf(responseTtl.toMillis())));
+        if (!Long.valueOf(1L).equals(completed)) {
+            // The record is gone or belongs to a fresher reservation - most likely
+            // this handler ran past lock-ttl and got reclaimed (Slice 032). The
+            // effect already happened; only caching it is lost, silently, unless
+            // logged here.
+            log.warn("Redis idempotency completion no-op for {} {} key={} - reservation gone or superseded "
+                    + "(handler likely ran longer than lock-ttl); response was not cached", key.route(), key.handler(), key.value());
+        }
     }
 
     @Override

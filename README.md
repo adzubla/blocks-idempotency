@@ -590,6 +590,16 @@ payment gateway call, sending an email, calling another service — where you
 want fast protection without a false promise of atomicity with your own
 database.
 
+**`lock-ttl` must outlast your slowest handler.** Lifecycle rides the record
+key's own TTL, so if a legitimately-slow-but-alive primary runs longer than
+`lock-ttl`, the key is already gone by the time it calls `complete()` — the
+response is silently dropped (never cached), indistinguishable from a crashed
+primary being reclaimed. The effect still ran; only the caching is lost. Set
+`lock-ttl` comfortably above your worst-case handler duration. When this
+happens, `RedisIdempotencyStore` logs a `WARN` (`... completion no-op for ...
+- reservation gone or superseded ...`) so it's visible to an operator instead
+of failing silently.
+
 ### 6.4 Postgres
 
 Qualifier `"postgres"` (`PostgresIdempotencyStore.QUALIFIER`). Exactly-once *for effects that write to the same

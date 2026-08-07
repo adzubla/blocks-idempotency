@@ -453,6 +453,14 @@ idempotency.redis.key-prefix=idempotency:
 gateway call, sending an email, calling another service) — you get fast
 protection without a false promise of atomicity with your own database.
 
+**`lock-ttl` must outlast your slowest handler.** Because lifecycle rides the
+key's own TTL, a legitimately-slow-but-alive primary that outruns `lock-ttl`
+has its key reclaimed before it calls `complete()` — the response is silently
+never cached (the effect still ran; only the cache write is lost), same as if
+the primary had crashed. Set `lock-ttl` comfortably above worst-case handler
+duration. `RedisIdempotencyStore` logs a `WARN` when `complete()` no-ops this
+way, so the gap is visible rather than silent.
+
 ### Postgres
 
 Qualifier `"postgres"`. Exactly-once *for effects that write to the same
