@@ -249,7 +249,53 @@ repeat, to detect the same key being reused for a *different* payload. A
 mismatch is a collision (`422` for HTTP, dead-lettered for messaging), not a
 normal duplicate.
 
-### 4.2. Request/delivery flow
+### 4.2. Choosing an Idempotency Key
+
+The one property that matters most: the same raw key must mean "the same
+intent, retried" and never "an unrelated intent that happens to reuse a
+value." Get this wrong in either direction and the mechanism works against
+you — too loose, and unrelated operations dedupe into each other or trip
+`collision`; too tight, and legitimate retries stop being recognized as
+retries at all.
+
+**Prefer the header strategy when you control the caller.** Generate an
+opaque token (a UUID or ULID is the recommended convention, though the
+server only enforces the fixed charset `[A-Za-z0-9_.:-]+` and
+`idempotency.key.max-length`) **once per logical operation attempt**, before
+the first send, and resend that exact value on every retry of that same
+attempt — not a fresh one per HTTP call. A new key generated on each retry
+defeats the mechanism entirely, since each "retry" then looks like a brand
+new operation to the server. This is the right default for anything you
+control end-to-end: your own frontend, your own service-to-service calls,
+your own message producers.
+
+**Prefer the body-field strategy when you don't control the caller**, or
+can't coordinate a dedicated header/property with it — third-party
+webhooks, callers integrating against your API without following your
+conventions, or a broker producer you don't own. Point `fieldPath` at
+whatever field already uniquely identifies the business entity the
+operation concerns (an order id, a payment id, an external transaction id)
+— something the caller was already going to send you, not a piece of
+plumbing they have to add. The requirement is that the field is
+**business-unique per intent**: if two logically different operations could
+ever share that field's value, they'll collide (`422`) or dedupe into each
+other incorrectly.
+
+**Either way, keep the key scoped to one intent, not shared across
+unrelated ones.** Don't reuse the same key for two operations that happen
+to occur close together just because it's convenient — the effective key
+already isolates by endpoint/listener (and principal, for HTTP), so you
+don't need to manually namespace a key yourself to avoid cross-endpoint
+collisions; you only need to keep it unique **within** one endpoint/listener
+per logical operation.
+
+A practical checklist:
+- Same value on every retry of the same operation — never regenerated per attempt.
+- Different value for every distinct operation, even ones that look similar (e.g. two separate orders from the same user in the same second).
+- Opaque and short enough to be cheap to store and log — a UUID/ULID or an existing business id, not a serialized object.
+- If you don't control the caller and can't guarantee either of the above, consider `keyRequired = false` for that endpoint/listener instead of guessing — see [4.1](#41-idempotency-key-vs-effective-key).
+
+### 4.3. Request/delivery flow
 
 One reservation/store decision flow is shared by every transport — only the
 adapter at the edges differs (an HTTP interceptor, or a broker-specific
