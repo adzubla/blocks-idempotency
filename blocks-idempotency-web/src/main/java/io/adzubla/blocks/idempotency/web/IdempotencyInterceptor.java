@@ -18,6 +18,7 @@ import io.adzubla.blocks.idempotency.response.ResponseReplayer;
 import io.adzubla.blocks.idempotency.store.EffectRolledBackException;
 import io.adzubla.blocks.idempotency.web.key.HeaderKeyStrategy;
 import io.adzubla.blocks.idempotency.web.key.HttpEffectiveKeyFactory;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
@@ -40,7 +41,12 @@ import java.util.TreeMap;
  * {@link IdempotencyEngine}: replays a completed record in {@link #preHandle},
  * or lets the handler execute and, in {@link #afterCompletion} (fired
  * regardless of whether the handler threw), either completes the record with
- * its 2xx response or releases the reservation on a non-2xx/exception.
+ * its 2xx response or releases the reservation on a non-2xx/exception. For a
+ * handler that completes asynchronously ({@code CompletableFuture}, {@code
+ * DeferredResult}, {@code Callable}), {@code afterCompletion} fires after the
+ * async dispatch that writes the result, possibly on a different thread than
+ * {@code preHandle} - fine for a store with no thread affinity, but not for
+ * {@code postgres}, whose reservation is a thread-bound transaction.
  *
  * <p>Slice 001-012 scope: header or body-field key strategy (whichever
  * annotation attribute is non-empty - exactly one is guaranteed by startup
@@ -84,6 +90,13 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
         Idempotent annotation = idempotentAnnotation(handler);
         if (annotation == null) {
+            return true;
+        }
+        if (request.getDispatcherType() == DispatcherType.ASYNC) {
+            // The handler completed asynchronously and Spring MVC is
+            // re-dispatching to write its result. The key was already resolved
+            // and reserved on the first dispatch; afterCompletion, which only
+            // fires once this dispatch finishes, settles it.
             return true;
         }
 
@@ -140,6 +153,10 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
             return true;
         }
         if (decision instanceof EngineDecision.Proceed proceed) {
+            CapturingHttpServletResponse capturing = WebUtils.getNativeResponse(response, CapturingHttpServletResponse.class);
+            if (capturing != null) {
+                capturing.startCapture();
+            }
             request.setAttribute(ATTR_EFFECTIVE_KEY, key);
             request.setAttribute(ATTR_POLICY, policy);
             request.setAttribute(ATTR_FENCE_TOKEN, proceed.fenceToken());
@@ -184,7 +201,7 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
 
     /**
      * The captured 2xx response. It is buffered by the {@link ContentCachingResponseWrapper}
-     * {@link IdempotencyFilter} put in place, which may sit underneath wrappers
+     * that {@link CapturingHttpServletResponse#startCapture()} put in place, which may sit underneath wrappers
      * added by later filters (e.g. Spring Security's). If that wrapper isn't in
      * the chain at all there is nothing to capture, but the effect did run - the
      * record is completed without a body ({@code response_unavailable} on a

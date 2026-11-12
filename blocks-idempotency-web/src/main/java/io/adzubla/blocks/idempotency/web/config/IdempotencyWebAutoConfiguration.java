@@ -8,6 +8,7 @@ import io.adzubla.blocks.idempotency.validation.IdempotentHandlerValidator;
 import io.adzubla.blocks.idempotency.web.IdempotencyExceptionHandler;
 import io.adzubla.blocks.idempotency.web.IdempotencyFilter;
 import io.adzubla.blocks.idempotency.web.IdempotencyInterceptor;
+import jakarta.servlet.DispatcherType;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -54,6 +55,9 @@ public class IdempotencyWebAutoConfiguration {
         FilterRegistrationBean<IdempotencyFilter> registration = new FilterRegistrationBean<>(new IdempotencyFilter());
         registration.addUrlPatterns("/*");
         registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
+        // ASYNC too: an asynchronously completed handler writes its result on
+        // a later async dispatch, after which the filter sends the buffered body.
+        registration.setDispatcherTypes(DispatcherType.REQUEST, DispatcherType.ASYNC);
         return registration;
     }
 
