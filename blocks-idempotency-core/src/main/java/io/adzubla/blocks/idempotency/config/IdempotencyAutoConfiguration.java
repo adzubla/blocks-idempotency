@@ -9,11 +9,11 @@ import io.adzubla.blocks.idempotency.metrics.NoOpIdempotencyMetrics;
 import io.adzubla.blocks.idempotency.store.IdempotencyStore;
 import io.adzubla.blocks.idempotency.store.IdempotencyStoreQualifiers;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 
@@ -44,7 +44,11 @@ import org.springframework.context.annotation.Bean;
  * <p>{@link IdempotencyMetrics} (Slice 011) resolves to {@link
  * MicrometerIdempotencyMetrics} when {@code idempotency.metrics.enabled}
  * (default {@code true}) and a {@link MeterRegistry} bean are both present,
- * otherwise to {@link NoOpIdempotencyMetrics}.
+ * otherwise to {@link NoOpIdempotencyMetrics}. The registry is looked up when
+ * the bean is created rather than through {@code @ConditionalOnBean}: Spring
+ * Boot's own {@code MeterRegistry} auto-configuration is ordered after this
+ * class, so its bean definition doesn't exist yet when this class's
+ * conditions are evaluated.
  */
 @AutoConfiguration
 @ConditionalOnBean(IdempotencyStore.class)
@@ -52,17 +56,10 @@ import org.springframework.context.annotation.Bean;
 public class IdempotencyAutoConfiguration {
 
     @Bean
-    @ConditionalOnProperty(prefix = "idempotency.metrics", name = "enabled", havingValue = "true", matchIfMissing = true)
-    @ConditionalOnBean(MeterRegistry.class)
     @ConditionalOnMissingBean(IdempotencyMetrics.class)
-    public IdempotencyMetrics micrometerIdempotencyMetrics(MeterRegistry registry) {
-        return new MicrometerIdempotencyMetrics(registry);
-    }
-
-    @Bean
-    @ConditionalOnMissingBean(IdempotencyMetrics.class)
-    public IdempotencyMetrics noOpIdempotencyMetrics() {
-        return NoOpIdempotencyMetrics.INSTANCE;
+    public IdempotencyMetrics idempotencyMetrics(ObjectProvider<MeterRegistry> registryProvider, IdempotencyProperties properties) {
+        MeterRegistry registry = properties.getMetrics().isEnabled() ? registryProvider.getIfAvailable() : null;
+        return registry != null ? new MicrometerIdempotencyMetrics(registry) : NoOpIdempotencyMetrics.INSTANCE;
     }
 
     @Bean

@@ -9,33 +9,48 @@ import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.UncheckedIOException;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Buffers the request body eagerly so it can be read more than once: by the
- * library (fingerprint, future body-field key extraction) and by the
- * controller's {@code @RequestBody}, independently and in any order.
+ * Buffers the request body on demand so it can be read more than once: by the
+ * library (fingerprint, body-field key extraction) and by the controller's
+ * {@code @RequestBody}, independently and in any order.
  *
- * <p>Unlike Spring's {@code ContentCachingRequestWrapper} (which caches bytes
- * as they're read from a single underlying stream), this wrapper reads the
- * full body once at construction time and hands out a fresh stream over the
- * cached bytes on every {@link #getInputStream()} call.
+ * <p>Nothing is read until {@link #getBody()} is first called. Until then
+ * {@link #getInputStream()}/{@link #getReader()} hand out the container's own
+ * stream, so a request the library never inspects (any handler that isn't
+ * {@code @Idempotent}) is left exactly as it arrived - the container can
+ * still parse a form or multipart body from it. Once {@link #getBody()} has
+ * buffered the body, every later {@link #getInputStream()} call gets a fresh
+ * stream over the buffered bytes.
  */
 public class CachedBodyHttpServletRequest extends HttpServletRequestWrapper {
 
-    private final byte[] body;
+    private byte[] body;
 
-    public CachedBodyHttpServletRequest(HttpServletRequest request) throws IOException {
+    public CachedBodyHttpServletRequest(HttpServletRequest request) {
         super(request);
-        this.body = request.getInputStream().readAllBytes();
     }
 
+    /** Reads (once) and returns the full request body; from here on the body is served from this buffer. */
     public byte[] getBody() {
+        if (body == null) {
+            try {
+                body = super.getInputStream().readAllBytes();
+            } catch (IOException e) {
+                throw new UncheckedIOException("failed to buffer the request body", e);
+            }
+        }
         return body;
     }
 
     @Override
-    public ServletInputStream getInputStream() {
+    public ServletInputStream getInputStream() throws IOException {
+        if (body == null) {
+            return super.getInputStream();
+        }
         ByteArrayInputStream byteStream = new ByteArrayInputStream(body);
         return new ServletInputStream() {
             @Override
@@ -57,11 +72,21 @@ public class CachedBodyHttpServletRequest extends HttpServletRequestWrapper {
             public int read() {
                 return byteStream.read();
             }
+
+            @Override
+            public int read(byte[] buffer, int offset, int length) {
+                return byteStream.read(buffer, offset, length);
+            }
         };
     }
 
     @Override
-    public BufferedReader getReader() {
-        return new BufferedReader(new InputStreamReader(getInputStream(), StandardCharsets.UTF_8));
+    public BufferedReader getReader() throws IOException {
+        if (body == null) {
+            return super.getReader();
+        }
+        String encoding = getCharacterEncoding();
+        Charset charset = encoding != null ? Charset.forName(encoding) : StandardCharsets.UTF_8;
+        return new BufferedReader(new InputStreamReader(getInputStream(), charset));
     }
 }

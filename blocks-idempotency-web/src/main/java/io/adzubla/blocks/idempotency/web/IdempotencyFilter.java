@@ -16,6 +16,11 @@ import java.io.IOException;
  * body survives multiple reads (see {@link CachedBodyHttpServletRequest}), the
  * response so its body can be captured for caching before being flushed to
  * the client.
+ *
+ * <p>Runs in front of every request, before the handler is known, so the
+ * request wrapper is passive: it reads nothing until {@link
+ * IdempotencyInterceptor} asks for the body of an {@code @Idempotent}
+ * handler's request. Every other request reaches the container untouched.
  */
 public class IdempotencyFilter implements Filter {
 

@@ -4,6 +4,7 @@ import com.zaxxer.hikari.HikariDataSource;
 import io.adzubla.blocks.idempotency.model.CachedResponse;
 import io.adzubla.blocks.idempotency.model.EffectiveKey;
 import io.adzubla.blocks.idempotency.model.ReservationResult;
+import io.adzubla.blocks.idempotency.store.EffectRolledBackException;
 import io.adzubla.blocks.idempotency.store.StoreUnavailableException;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
@@ -59,7 +60,10 @@ class PostgresIdempotencyStoreOutageTest {
     }
 
     @Test
-    void completeSurfacesStoreUnavailableWhenTheConnectionDiesAfterReserve() {
+    void completeSurfacesEffectRolledBackWhenTheConnectionDiesAfterReserve() {
+        // Not StoreUnavailableException: the handler's writes shared the
+        // reservation's transaction, so a commit that can't happen means the
+        // effect is gone, not merely uncached.
         Fixture fixture = newFixture();
         EffectiveKey key = key("complete-outage-1");
         String fenceToken = fixture.store.reserve(key, "fp", Duration.ofSeconds(30)).fenceToken().orElseThrow();
@@ -68,7 +72,7 @@ class PostgresIdempotencyStoreOutageTest {
 
         assertThatThrownBy(() -> fixture.store.complete(
                 key, fenceToken, new CachedResponse(201, Map.of(), "{}".getBytes()), Duration.ofSeconds(30)))
-                .isInstanceOf(StoreUnavailableException.class);
+                .isInstanceOf(EffectRolledBackException.class);
 
         fixture.dataSource.close();
     }

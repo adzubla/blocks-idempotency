@@ -161,6 +161,12 @@ public class IdempotencyEngine {
         return new EngineDecision.ProceedUnprotected();
     }
 
+    /**
+     * Completes the record. A {@link StoreUnavailableException} is swallowed
+     * (the effect ran, only its caching is lost); an {@link
+     * io.adzubla.blocks.idempotency.store.EffectRolledBackException} is not -
+     * the store rolled the effect back, so the caller must not report success.
+     */
     public void complete(EffectiveKey key, String fenceToken, CachedResponse response, Duration responseTtl) {
         try {
             store.complete(key, fenceToken, response, responseTtl);

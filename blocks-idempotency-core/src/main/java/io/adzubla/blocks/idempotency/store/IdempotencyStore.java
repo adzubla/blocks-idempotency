@@ -32,6 +32,9 @@ public interface IdempotencyStore {
      * Mark the key completed with the captured response and extend to the response TTL.
      * A no-op if {@code fenceToken} no longer matches the current reservation (it
      * expired and was superseded) - see {@link ReservationResult}.
+     *
+     * @throws EffectRolledBackException if this store owns the effect's
+     *         transaction and it could not be committed - the effect did not happen
      */
     void complete(EffectiveKey key, String fenceToken, CachedResponse response, Duration responseTtl);
 

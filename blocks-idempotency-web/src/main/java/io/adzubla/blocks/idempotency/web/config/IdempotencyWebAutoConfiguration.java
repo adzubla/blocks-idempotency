@@ -8,6 +8,7 @@ import io.adzubla.blocks.idempotency.validation.IdempotentHandlerValidator;
 import io.adzubla.blocks.idempotency.web.IdempotencyExceptionHandler;
 import io.adzubla.blocks.idempotency.web.IdempotencyFilter;
 import io.adzubla.blocks.idempotency.web.IdempotencyInterceptor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
@@ -58,7 +59,8 @@ public class IdempotencyWebAutoConfiguration {
 
     @Bean
     public IdempotentHandlerValidator idempotentHandlerValidator(ConfigurableListableBeanFactory beanFactory,
-            RequestMappingHandlerMapping requestMappingHandlerMapping, IdempotencyProperties properties) {
+            @Qualifier("requestMappingHandlerMapping") RequestMappingHandlerMapping requestMappingHandlerMapping,
+            IdempotencyProperties properties) {
         return new IdempotentHandlerValidator(beanFactory, requestMappingHandlerMapping, properties);
     }
 

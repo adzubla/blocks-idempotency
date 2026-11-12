@@ -9,6 +9,8 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -29,6 +31,18 @@ class IdempotencyMetricsAutoConfigurationTest {
     void metricsEnabledByDefaultWithAMeterRegistryUsesMicrometer() {
         runner.withUserConfiguration(MeterRegistryConfig.class).run(context ->
                 assertThat(context.getBean(IdempotencyMetrics.class)).isInstanceOf(MicrometerIdempotencyMetrics.class));
+    }
+
+    @Test
+    void meterRegistryFromALaterAutoConfigurationStillUsesMicrometer() {
+        // Spring Boot's own MeterRegistry auto-configuration sorts after this
+        // library's (io.* before org.*), so the registry's bean definition
+        // doesn't exist yet when IdempotencyAutoConfiguration's conditions
+        // are evaluated.
+        new ApplicationContextRunner()
+                .withUserConfiguration(PlainStoreConfig.class)
+                .withConfiguration(AutoConfigurations.of(IdempotencyAutoConfiguration.class, LateMeterRegistryAutoConfiguration.class))
+                .run(context -> assertThat(context.getBean(IdempotencyMetrics.class)).isInstanceOf(MicrometerIdempotencyMetrics.class));
     }
 
     @Test
@@ -65,6 +79,22 @@ class IdempotencyMetricsAutoConfigurationTest {
         @Bean
         IdempotencyStore idempotencyStore() {
             return new InMemoryIdempotencyStore();
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class PlainStoreConfig {
+        @Bean
+        IdempotencyStore idempotencyStore() {
+            return new InMemoryIdempotencyStore();
+        }
+    }
+
+    @AutoConfiguration(after = IdempotencyAutoConfiguration.class)
+    static class LateMeterRegistryAutoConfiguration {
+        @Bean
+        MeterRegistry meterRegistry() {
+            return new SimpleMeterRegistry();
         }
     }
 

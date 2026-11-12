@@ -15,6 +15,7 @@ import io.adzubla.blocks.idempotency.policy.IdempotencyPolicy;
 import io.adzubla.blocks.idempotency.policy.PolicyResolver;
 import io.adzubla.blocks.idempotency.response.ResponseCapture;
 import io.adzubla.blocks.idempotency.response.ResponseReplayer;
+import io.adzubla.blocks.idempotency.store.EffectRolledBackException;
 import io.adzubla.blocks.idempotency.web.key.HeaderKeyStrategy;
 import io.adzubla.blocks.idempotency.web.key.HttpEffectiveKeyFactory;
 import jakarta.servlet.http.HttpServletRequest;
@@ -25,8 +26,14 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.web.util.ContentCachingResponseWrapper;
+import org.springframework.web.util.WebUtils;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 
 /**
  * Reads the resolved handler's {@link Idempotent} annotation and drives the
@@ -60,6 +67,8 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
     private static final String ATTR_FENCE_TOKEN = IdempotencyInterceptor.class.getName() + ".fenceToken";
     private static final String ATTR_ENGINE = IdempotencyInterceptor.class.getName() + ".engine";
 
+    private static final byte[] NO_BODY = new byte[0];
+
     private final IdempotencyEngineRegistry engineRegistry;
     private final IdempotencyProperties properties;
     private final PrincipalClaimResolver principalClaimResolver;
@@ -80,7 +89,7 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
 
         IdempotencyPolicy policy = PolicyResolver.resolve(annotation, properties);
 
-        byte[] body = request instanceof CachedBodyHttpServletRequest cached ? cached.getBody() : new byte[0];
+        byte[] body = requestBody(request);
         // Exactly one of header()/fieldPath() is set - validated at startup (Slice 010).
         Optional<String> rawKey = annotation.header().isEmpty()
                 ? BodyFieldKeyStrategy.resolve(body, annotation.fieldPath())
@@ -143,13 +152,13 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
     @Override
     public void afterCompletion(HttpServletRequest request, HttpServletResponse response, Object handler, Exception ex) {
         EffectiveKey key = (EffectiveKey) request.getAttribute(ATTR_EFFECTIVE_KEY);
-        if (key == null || !(response instanceof ContentCachingResponseWrapper wrapper)) {
+        if (key == null) {
             return;
         }
 
         String fenceToken = (String) request.getAttribute(ATTR_FENCE_TOKEN);
         IdempotencyEngine engine = (IdempotencyEngine) request.getAttribute(ATTR_ENGINE);
-        if (ex != null || !HttpStatusCode.valueOf(wrapper.getStatus()).is2xxSuccessful()) {
+        if (ex != null || !HttpStatusCode.valueOf(response.getStatus()).is2xxSuccessful()) {
             // Only 2xx is cached; a non-2xx or a thrown exception releases the
             // reservation so a genuine retry re-executes rather than replaying
             // a stale error.
@@ -158,8 +167,72 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
         }
 
         IdempotencyPolicy policy = (IdempotencyPolicy) request.getAttribute(ATTR_POLICY);
-        CachedResponse captured = ResponseCapture.capture(wrapper, properties.getReplay().getHeaderDenylist(), properties.getMaxBodySize());
-        engine.complete(key, fenceToken, captured, policy.ttl());
+        try {
+            engine.complete(key, fenceToken, capture(response), policy.ttl());
+        } catch (EffectRolledBackException e) {
+            // The store rolled the handler's effect back at commit. The 2xx the
+            // handler produced is still only buffered (IdempotencyFilter), so
+            // replace it rather than tell the client something happened that didn't.
+            log.error("Idempotent effect rolled back at commit - responding 500 instead of the handler's {}: {} {} key={}",
+                    response.getStatus(), key.route(), key.handler(), key.value(), e);
+            if (!response.isCommitted()) {
+                response.reset();
+                response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            }
+        }
+    }
+
+    /**
+     * The captured 2xx response. It is buffered by the {@link ContentCachingResponseWrapper}
+     * {@link IdempotencyFilter} put in place, which may sit underneath wrappers
+     * added by later filters (e.g. Spring Security's). If that wrapper isn't in
+     * the chain at all there is nothing to capture, but the effect did run - the
+     * record is completed without a body ({@code response_unavailable} on a
+     * repeat) rather than left to expire and re-execute.
+     */
+    private CachedResponse capture(HttpServletResponse response) {
+        ContentCachingResponseWrapper wrapper = WebUtils.getNativeResponse(response, ContentCachingResponseWrapper.class);
+        if (wrapper == null) {
+            log.warn("IdempotencyFilter is not in the filter chain - the response can't be captured for replay");
+            return new CachedResponse(response.getStatus(), Map.of(), null);
+        }
+        return ResponseCapture.capture(wrapper, properties.getReplay().getHeaderDenylist(), properties.getMaxBodySize());
+    }
+
+    /**
+     * The bytes the body-field key and the fingerprint are taken from.
+     *
+     * <p>A JSON (or any other raw) body is buffered through the {@link
+     * CachedBodyHttpServletRequest} {@link IdempotencyFilter} put in place,
+     * which may sit underneath wrappers added by later filters. A form post is
+     * not read from the stream - the container parses it into parameters, and
+     * draining the stream here would leave the handler without them - so its
+     * fingerprint input is the parameters themselves, in a canonical order. A
+     * multipart body is left to the container for the same reason and
+     * contributes nothing: such a request is keyed and deduplicated, but a
+     * different upload under the same key is not detected as a collision.
+     */
+    private static byte[] requestBody(HttpServletRequest request) {
+        String contentType = request.getContentType() == null ? "" : request.getContentType().toLowerCase(Locale.ROOT);
+        if (contentType.startsWith("application/x-www-form-urlencoded")) {
+            return canonicalForm(request.getParameterMap());
+        }
+        if (contentType.startsWith("multipart/")) {
+            return NO_BODY;
+        }
+        CachedBodyHttpServletRequest cached = WebUtils.getNativeRequest(request, CachedBodyHttpServletRequest.class);
+        return cached != null ? cached.getBody() : NO_BODY;
+    }
+
+    private static byte[] canonicalForm(Map<String, String[]> parameters) {
+        StringBuilder form = new StringBuilder();
+        new TreeMap<>(parameters).forEach((name, values) -> {
+            for (String value : values) {
+                form.append(URLEncoder.encode(name, StandardCharsets.UTF_8)).append('=')
+                        .append(URLEncoder.encode(value, StandardCharsets.UTF_8)).append('&');
+            }
+        });
+        return form.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     private Idempotent idempotentAnnotation(Object handler) {

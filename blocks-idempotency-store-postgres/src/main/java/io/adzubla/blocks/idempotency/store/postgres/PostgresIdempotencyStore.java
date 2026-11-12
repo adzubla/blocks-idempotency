@@ -5,6 +5,7 @@ import io.adzubla.blocks.idempotency.model.EffectiveKey;
 import io.adzubla.blocks.idempotency.model.IdempotencyRecord;
 import io.adzubla.blocks.idempotency.model.RecordState;
 import io.adzubla.blocks.idempotency.model.ReservationResult;
+import io.adzubla.blocks.idempotency.store.EffectRolledBackException;
 import io.adzubla.blocks.idempotency.store.IdempotencyStore;
 import io.adzubla.blocks.idempotency.store.StoreUnavailableException;
 import org.slf4j.Logger;
@@ -131,6 +132,22 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
             RETURNING route
             """;
 
+    /**
+     * Bounds the reservation's row-lock wait for the current transaction
+     * only (the {@code SET LOCAL} equivalent, but bindable), returning the
+     * value in effect before - {@link #reserve} restores it once the
+     * reservation is won, since the handler then runs its own statements in
+     * this same transaction and must not inherit the store's timeout. The
+     * {@code OFFSET 0} keeps the subquery from being flattened, so the old
+     * value is read before {@code set_config} replaces it.
+     */
+    private static final String SWAP_LOCK_TIMEOUT = """
+            SELECT previous.value, set_config('lock_timeout', ?, true)
+            FROM (SELECT current_setting('lock_timeout') AS value OFFSET 0) previous
+            """;
+
+    private static final String SET_LOCK_TIMEOUT = "SELECT set_config('lock_timeout', ?, true)";
+
     /** SQLState 55P03 ("lock_not_available") - raised when {@code lock_timeout} is exceeded. */
     private static final String SQLSTATE_LOCK_NOT_AVAILABLE = "55P03";
 
@@ -171,15 +188,14 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
         }
         String fenceToken = UUID.randomUUID().toString();
         try {
-            // String-built, not `?`-bound like every other statement here:
-            // Postgres's SET doesn't accept a bind parameter in the value
-            // position. Safe regardless - lockTimeout is trusted config, never
-            // user input.
-            jdbc.execute("SET LOCAL lock_timeout = '" + lockTimeout.toMillis() + "ms'");
+            String callerLockTimeout = jdbc.queryForObject(SWAP_LOCK_TIMEOUT, (rs, rowNum) -> rs.getString(1), lockTimeout.toMillis() + "ms");
             for (int attempt = 0; attempt < MAX_RESERVE_ATTEMPTS; attempt++) {
                 Object[] args = concat(keyArgs(key), new Object[] {fingerprint, fenceToken, toPgInterval(lockTtl)});
                 boolean won = !jdbc.query(UPSERT_RESERVATION, (rs, rowNum) -> rs.getString(1), args).isEmpty();
                 if (won) {
+                    // The handler runs in this same transaction from here on -
+                    // hand it back the lock_timeout it would have had.
+                    jdbc.queryForObject(SET_LOCK_TIMEOUT, String.class, callerLockTimeout);
                     bindScope(status, fenceToken);
                     return ReservationResult.reserved(fenceToken);
                 }
@@ -189,6 +205,10 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
                 // scope) it's our own not-yet-superseded reservation.
                 Optional<IdempotencyRecord> existing = findRecord(key);
                 if (existing.isPresent()) {
+                    if (!status.isNewTransaction()) {
+                        // Joined a transaction the caller keeps using after this returns.
+                        jdbc.queryForObject(SET_LOCK_TIMEOUT, String.class, callerLockTimeout);
+                    }
                     transactionManager.commit(status);
                     return ReservationResult.exists(existing.get());
                 }
@@ -318,8 +338,14 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
             jdbc.update(COMPLETE, args);
             transactionManager.commit(current.status());
         } catch (RuntimeException e) {
+            // Whatever the cause (connection lost, a constraint deferred to
+            // commit, the transaction marked rollback-only by the handler),
+            // the handler's writes shared this transaction and are gone with
+            // it - unlike a best-effort store, this is not "only the caching
+            // was lost", so it must not be reported as StoreUnavailableException.
             safeRollback(current.status());
-            throw asStoreUnavailableIfConnectionFailure(e);
+            log.warn("Postgres idempotency completion failed - the effect was rolled back: {}", key, e);
+            throw new EffectRolledBackException("the transaction for " + key + " could not be committed", e);
         } finally {
             scope.remove();
         }
