@@ -67,3 +67,34 @@ same load-bearing-ordering technique the store modules already use via
   transport-neutral construction seam every adapter uses — `HttpEffectiveKeyFactory`
   (web) and any future messaging adapter's key resolver both delegate to it
   rather than constructing `EffectiveKey` directly.
+- **The filter is in front of every request, so its wrappers are passive.**
+  `IdempotencyFilter` runs before the handler is known and used to drain every
+  request body and buffer every response, which broke form posts, multipart
+  uploads, streaming and async results for the whole application, not just
+  `@Idempotent` endpoints. `CachedBodyHttpServletRequest` now reads nothing until
+  the interceptor asks for the body, and a new `CapturingHttpServletResponse`
+  writes straight through until the interceptor reserves a key. A form body is
+  never read from the stream (the container needs it): its fingerprint input is
+  the request's parameters in sorted order. A multipart body is not fingerprinted
+  at all.
+- **The interceptor finds the wrappers by unwrapping, not by type-testing the
+  objects it is handed.** Filters ordered after `IdempotencyFilter` (Spring
+  Security's chain among them) wrap both objects again; `instanceof` on the
+  outermost one silently disabled body fingerprinting and left every reservation
+  uncompleted. The interceptor uses `WebUtils.getNativeRequest`/`getNativeResponse`
+  and reads the status from the outermost response.
+- **The filter is registered for `REQUEST` and `ASYNC` dispatches.** An
+  asynchronously completed handler writes its result on a later async dispatch
+  that carries the first dispatch's wrappers; the filter sends the buffered body
+  only once the request is no longer async, and the interceptor skips `preHandle`
+  on that dispatch so the handler doesn't collide with its own reservation.
+  `afterCompletion` may therefore run on a different thread than `preHandle` -
+  see ADR 0003 for what that means for the Postgres store.
+- **Beans are not injected by type alone where Spring Boot may add a second one.**
+  `IdempotentHandlerValidator` takes `RequestMappingHandlerMapping` with
+  `@Qualifier("requestMappingHandlerMapping")`: Actuator registers a second bean
+  of that type, and the modules aren't compiled with `-parameters`, so
+  parameter-name matching can't break the tie. Core's metrics bean looks its
+  `MeterRegistry` up through an `ObjectProvider` when it is created instead of
+  `@ConditionalOnBean`, because Spring Boot's registry auto-configuration is
+  ordered after `IdempotencyAutoConfiguration` and the condition never matched.

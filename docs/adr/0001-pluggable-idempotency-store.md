@@ -89,3 +89,10 @@ inherits the global configuration default.
   default for Redis.
 - Startup validation must fail fast if an endpoint references a store qualifier with
   no matching bean (module not included on the classpath).
+- **The two guarantees fail differently at `complete()`, and the SPI says so.** For
+  a best-effort store a failed `complete()` means the effect ran and only its
+  caching was lost: the store throws `StoreUnavailableException`, which the engine
+  swallows. For a store that owns the effect's transaction (Postgres, ADR 0003) a
+  failed `complete()` means the effect was rolled back: the store throws
+  `EffectRolledBackException`, which the engine lets through so the transport
+  adapter doesn't report a success that didn't happen.

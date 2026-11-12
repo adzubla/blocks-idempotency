@@ -142,7 +142,8 @@ capture.
   from inside the still-open reservation transaction.
 - **`lock_timeout` is now set** (Slice 018, `PostgresStoreProperties.lockTimeout`,
   default 2s), satisfying ADR 0001/0002's "bounded by `lock_timeout`". `reserve()`
-  sets it (`SET LOCAL`) for its own transaction before attempting the reservation;
+  sets it for its own transaction before attempting the reservation (see the
+  next bullet for how long it stays in effect);
   a caught lock-not-available error (SQLState `55P03`) rolls back and is fenced
   through as an ordinary `IN_PROGRESS` record carrying the caller's own
   fingerprint — reusing the engine's existing `RejectReason.IN_PROGRESS`/WAIT
@@ -153,3 +154,33 @@ capture.
   further), a genuinely colliding fingerprint isn't detected in this narrow
   window - it degrades to an ordinary in-progress conflict instead of a 422,
   resolved for real once the row's lock frees up.
+- **The store's `lock_timeout` is scoped to the reservation, not the handler.**
+  Because the handler joins the transaction `reserve()` opened, a transaction-wide
+  `SET LOCAL lock_timeout` also bounded the handler's own row-lock waits to the
+  store's 2s. `reserve()` now reads the value in effect, sets its own through
+  `set_config('lock_timeout', ?, true)`, and restores the caller's value once the
+  reservation is won - and likewise before returning `EXISTS` when it joined a
+  transaction the caller keeps using. `await()` still uses `SET LOCAL`: its
+  transaction ends before it returns.
+- **A commit that fails in `complete()` is an effect that didn't happen.** The
+  commit runs after the handler has returned its `2xx` - from
+  `IdempotencyInterceptor.afterCompletion` - so a failure there (connection lost, a
+  constraint deferred to commit, the shared transaction marked rollback-only by an
+  inner `@Transactional` call) used to leave the client holding a success for
+  writes that were rolled back. `complete()` now throws `EffectRolledBackException`
+  for any failure; unlike `StoreUnavailableException` the engine does not swallow
+  it. The HTTP adapter discards the still-buffered response and answers a bare
+  `500`; the messaging advice lets it propagate, so the delivery fails and the
+  broker redelivers. This partly reverses "`IdempotencyInterceptor` and
+  `idempotency-core` are unchanged" above: core gained one exception type and the
+  interceptor one `catch`, but neither depends on spring-tx or knows which store is
+  in use. Moving the commit ahead of `afterCompletion` (e.g. into `postHandle`,
+  where the exception-handler chain still applies) was not attempted.
+- **Async handlers now reach the store, and still don't work with it.** The web
+  module handles asynchronously completed handlers for stores with no thread
+  affinity (ADR 0006), which changes how the unsupported Postgres combination
+  fails: `complete()` runs on a different thread than `reserve()`, finds no
+  thread-local scope, and returns as a fenced no-op. The client receives the
+  handler's `2xx` while the transaction stays open, uncommitted, on the original
+  thread. Nothing rejects an async return type on a `store="postgres"` endpoint at
+  startup yet.

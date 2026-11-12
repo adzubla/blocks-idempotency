@@ -96,3 +96,8 @@ We decided:
   case. A single generic `@ExceptionHandler(IdempotencyException.class)` replaced
   the six per-type handlers, since the response shape is now identical modulo
   that one extra header.
+- **One response sits outside the taxonomy.** With the Postgres store, a commit
+  that fails after the handler produced its `2xx` is answered with a bare `500`
+  (ADR 0003). It carries no `Idempotency-Reject-Reason`: it isn't an idempotency
+  decision but a failed effect, and it is written in `afterCompletion`, past the
+  point where the exception-handler chain could shape it.

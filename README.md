@@ -247,7 +247,8 @@ destination) plus the normalized request/message body. It's not part of the
 effective key — it's compared against what was stored for that key on a
 repeat, to detect the same key being reused for a *different* payload. A
 mismatch is a collision (`422` for HTTP, dead-lettered for messaging), not a
-normal duplicate.
+normal duplicate. What counts as "the body" for an HTTP form or multipart
+request is described under [Web — Behavior](#behavior).
 
 ### 4.2. Choosing an Idempotency Key
 
@@ -376,6 +377,29 @@ Web-specific global configuration is `idempotency.scope.principal-enabled` /
   exception-handling machinery just like an exception thrown from a
   controller method. A default `@ControllerAdvice`, auto-registered by the
   library, turns each one into a bare status(+headers)/empty-body response.
+- The library's servlet filter sits in front of every request, but it only
+  reads a request body or buffers a response for a request that reaches an
+  `@Idempotent` handler and reserves a key. Every other endpoint in the
+  application — form posts, multipart uploads, streaming, server-sent
+  events, async results — is left exactly as it would be without the
+  library.
+- It works behind filters that wrap the request and response, such as
+  Spring Security's filter chain.
+- **Form posts** (`application/x-www-form-urlencoded`) are supported. The
+  body is left for the servlet container to parse, so the fingerprint is
+  taken from the request's parameters in sorted order — which includes any
+  query-string parameters — rather than from the raw bytes. `fieldPath`
+  does not apply to a form body; use `header`.
+- **Multipart requests** are keyed and deduplicated, but the body is not
+  part of the fingerprint: a different upload sent under the same key is
+  replayed as a duplicate, not rejected as a collision.
+- **Async handlers** (`CompletableFuture`, `DeferredResult`, `Callable`) are
+  supported with the Redis and in-memory stores: the key is reserved once,
+  and the record is completed or released with the asynchronous result.
+  They are not supported with the Postgres store (see
+  [6.4 Postgres](#64-postgres)). A streaming handler (`StreamingResponseBody`,
+  `SseEmitter`) on an `@Idempotent` endpoint is buffered in full before
+  anything reaches the client, since the whole body is needed for replay.
 
 **Status codes at a glance.** Every non-2xx response carries
 `Idempotency-Reject-Reason` — a closed vocabulary uniform across all
@@ -395,6 +419,13 @@ reproduces the original captured response verbatim.
 | `400`                 | Key required but missing                                                          | `IdempotencyKeyRequiredException`         | `key_required`                       | none                                   | empty                  |
 | `400`                 | Key value too long, or outside the allowed charset                                | `IdempotencyKeyInvalidException`          | `key_invalid`                        | none                                   | empty                  |
 | `503`                 | Store unavailable and `onStoreFailure = CLOSED`                                   | `IdempotencyFailClosedException`          | `store_unavailable`                  | none                                   | empty                  |
+
+One response falls outside this table: with the Postgres store, if the
+transaction can't be committed after the handler has already produced its
+`2xx`, the client gets a bare `500` with no body and no
+`Idempotency-Reject-Reason` (see [6.4 Postgres](#64-postgres)). It is
+written after the handler has finished, so a `@ControllerAdvice` can't
+reshape it.
 
 **Overriding error responses.** Because these are ordinary exceptions, your
 own `@ControllerAdvice` can override any single one of them — declare an
@@ -654,7 +685,9 @@ joins transparently via ordinary `@Transactional` or plain JDBC on the same
 thread); completing commits the response and the effect together; releasing
 rolls back both. Concurrency is native — a second reservation blocks on the
 row's conflict until the first commits or rolls back, bounded by a
-configurable lock timeout, rather than polling.
+configurable lock timeout, rather than polling. That timeout applies only to
+the reservation itself: once the key is reserved, the handler's own
+statements run with whatever `lock_timeout` the connection normally has.
 
 Requires `spring-boot-starter-jdbc`, a `DataSource`/
 `PlatformTransactionManager`, and the store's own table. A Flyway migration
@@ -675,12 +708,27 @@ idempotency.postgres.cleanup.interval=5m
 database — creating an order row, for instance — and you want a real
 exactly-once guarantee rather than best-effort caching.
 
-**Not supported with async handlers** (`Callable`/`DeferredResult`/WebFlux):
-those can hop threads mid-request, which breaks the thread-bound transaction
-this store relies on. Use a synchronous handler with the Postgres store. The
-same thread-bound assumption extends to message listeners — it works as long
-as the listener processes each delivery synchronously on a single thread,
-which is the default for `@KafkaListener`/`@RabbitListener`/`@JmsListener`.
+**A failed commit is reported, not hidden.** The handler's writes only
+become durable when the store commits, which happens after the handler has
+returned. If that commit fails — the connection dropped, a constraint
+deferred to commit time, or the transaction was marked rollback-only by an
+inner `@Transactional` call whose exception the handler caught — the
+handler's writes and the reservation are rolled back together. Over HTTP
+the handler's buffered `2xx` is discarded and the client gets a bare `500`;
+headers set earlier in the request are cleared with it. For a message
+listener the delivery fails and is left to the broker to redeliver. Either
+way the key is free again, so a retry re-executes.
+
+**Not supported with async handlers** (`Callable`/`DeferredResult`/
+`CompletableFuture`/WebFlux): those complete on a different thread than the
+one that reserved the key, which breaks the thread-bound transaction this
+store relies on. Nothing rejects this combination at startup: the client
+receives the handler's `2xx`, but the transaction is never committed and
+stays open on the original thread. Use a synchronous handler with the
+Postgres store. The same thread-bound assumption extends to message
+listeners — it works as long as the listener processes each delivery
+synchronously on a single thread, which is the default for
+`@KafkaListener`/`@RabbitListener`/`@JmsListener`.
 
 ### 6.5 Choosing a store
 
@@ -711,6 +759,10 @@ overhead, nothing throws — whenever either condition isn't met:
 - `idempotency.metrics.enabled=false` (default `true`), or
 - no `MeterRegistry` bean is on the context (e.g. Actuator isn't on the
   classpath).
+
+The registry is looked up when the metrics bean is created, so it doesn't
+matter whether it comes from Spring Boot's auto-configuration or from a
+bean you define yourself.
 
 You can also supply your own `IdempotencyMetrics` bean instead of the
 built-in Micrometer one — it wins over auto-configuration automatically
