@@ -146,3 +146,23 @@ follow-ons.
 | [056](056-sqs-startup-validation-wait-disabled.md) | SQS startup validation: reject `whenInProgress=WAIT` | 054 |
 | [057](057-sqs-redis-store-end-to-end.md) | Redis store wired into the SQS module end-to-end | 054 |
 | [058](058-sqs-postgres-store-end-to-end.md) | Postgres store wired into the SQS module end-to-end | 054 |
+
+## Batch 9 — system analysis (2026-11-19)
+
+Defects and risks found by a whole-system code read (core, web, stores,
+messaging). Filed **without** `@Disabled` repro tests, unlike Batch 4: writing
+the repro is the first acceptance criterion where one applies. Item 064 is the
+preventive companion to [033](033-postgres-dangling-reservation-scope.md). All
+slices are **AFK** and `needs-triage`.
+
+| # | Slice | Type | Blocked by |
+|---|-------|------|-----------|
+| [059](059-redis-messaging-redelivery-acked-while-locked.md) | Redis + messaging: primary's own redelivery ack-and-skipped while its stale lock lives → message lost | AFK | — |
+| [060](060-fingerprint-ignores-query-string.md) | Fingerprint ignores the query string → different requests replay instead of 422 | AFK | — |
+| [061](061-postgres-schema-column-limits-raw-500.md) | Postgres column limits narrower than accepted key/route/principal → raw 500 | AFK | — |
+| [062](062-request-body-buffered-unbounded.md) | `@Idempotent` request bodies buffered fully into memory with no limit | AFK | — |
+| [063](063-messaging-deserialized-payload-empty-body.md) | Kafka/JMS deserialized payload fingerprinted as empty body (dead-letters all / disables collisions) | AFK | — |
+| [064](064-postgres-async-handler-startup-rejection.md) | Reject async `@Idempotent` handlers on the Postgres store at startup | AFK | — |
+| [065](065-postgres-waiters-pool-exhaustion.md) | Postgres: blocked duplicate requests can exhaust the connection pool | AFK | — |
+| [066](066-postgres-cleanup-unbatched-delete.md) | Postgres cleanup sweep is a single unbatched `DELETE` | AFK | — |
+| [067](067-unauthenticated-shared-key-space-oracle.md) | Unauthenticated routes share one key space (existence oracle for body-field keys) | AFK | — |

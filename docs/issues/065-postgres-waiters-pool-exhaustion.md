@@ -1,0 +1,34 @@
+# Slice 065 — Postgres: blocked duplicate requests can exhaust the connection pool
+
+> Source: system analysis (2026-11-19) · Type: AFK
+> Status: needs-triage
+
+## What to build
+
+With the Postgres store, every in-flight `@Idempotent` request holds a pooled
+connection for its handler's whole duration (the reservation *is* the open
+transaction, ADR 0003). Every concurrent **duplicate** also takes a connection
+and blocks on the row lock for up to `lock-timeout` (2s default) in `reserve()`.
+Under `WAIT` it then blocks again in `await()` for up to `wait-timeout`.
+
+A burst of retries for slow requests (for example a client retry storm after a
+timeout) can therefore hold the whole Hikari pool. Unrelated requests that need
+a connection then stall or time out, which turns a slow endpoint into an
+app-wide outage.
+
+Candidate responses, for triage:
+- Document the sizing rule (pool size vs. expected concurrent primaries plus
+  blocked duplicates) and recommend a short `lock-timeout` for `REJECT`
+  endpoints.
+- Optionally bound the number of concurrently blocked waiters, for example with
+  a semaphore, failing fast with 409 + `Retry-After` when it's full.
+- Add a metric or gauge for blocked waiters so operators can see the pressure.
+
+## Acceptance criteria
+
+- [ ] Triage decision recorded (document / bound waiters / metric).
+- [ ] README's Postgres section covers connection-pool sizing for this store.
+
+## Blocked by
+
+—
