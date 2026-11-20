@@ -1,7 +1,7 @@
 # Slice 059 — Redis + messaging: the primary's own redelivery is ack-and-skipped while its stale lock lives
 
 > Source: system analysis (2026-11-19) · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

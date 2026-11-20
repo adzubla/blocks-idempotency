@@ -1,7 +1,7 @@
 # Slice 046 — Redis store wired into the RabbitMQ module end-to-end
 
 > Source: docs/prd/messaging-extension.md · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

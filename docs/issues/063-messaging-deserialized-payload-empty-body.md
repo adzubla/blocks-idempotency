@@ -1,7 +1,7 @@
 # Slice 063 — Kafka/JMS: a deserialized payload is fingerprinted as an empty body
 
 > Source: system analysis (2026-11-19) · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

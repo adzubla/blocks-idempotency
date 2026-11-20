@@ -1,7 +1,7 @@
 # Slice 049 — JMS happy-path dedupe-skip (foundation)
 
 > Source: docs/prd/messaging-extension.md · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

@@ -1,7 +1,7 @@
 # Slice 067 — Unauthenticated routes share one key space (existence oracle for body-field keys)
 
 > Source: system analysis (2026-11-19) · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

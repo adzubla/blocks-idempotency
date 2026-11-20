@@ -1,7 +1,7 @@
 # Slice 014 — `IdempotencyStore` contract test suite
 
 > Source: docs/prd/idempotency-library.md · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

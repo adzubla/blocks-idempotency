@@ -1,7 +1,7 @@
 # Slice 019 — `await()` as a real `IdempotencyStore` operation, with a native Postgres override
 
 > Source: docs/prd/idempotency-library.md · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

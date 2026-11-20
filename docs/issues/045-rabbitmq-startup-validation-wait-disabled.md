@@ -1,7 +1,7 @@
 # Slice 045 — RabbitMQ startup validation: reject `whenInProgress=WAIT`
 
 > Source: docs/prd/messaging-extension.md · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

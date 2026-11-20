@@ -10,4 +10,6 @@ The skills speak in terms of five canonical triage roles. This repo uses a local
 | `ready-for-human` | `ready-for-human`   | Requires human implementation            |
 | `wontfix`         | `wontfix`           | Will not be actioned                     |
 
+An implemented issue is marked `Status: done` (not a triage role, but the closing state). Issues from the first batches predate the `Status:` line and have none; INDEX.md notes them as implemented.
+
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), add or update a `Status: <value>` line near the top of the issue file, alongside the existing `> Source: ... · Type: ...` line.

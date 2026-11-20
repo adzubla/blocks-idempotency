@@ -1,7 +1,7 @@
 # Slice 052 — Redis store wired into the JMS module end-to-end
 
 > Source: docs/prd/messaging-extension.md · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

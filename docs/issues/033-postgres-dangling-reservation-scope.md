@@ -1,7 +1,7 @@
 # Slice 033 — Harden against a dangling Postgres reservation scope surviving thread reuse
 
 > Source: bug hunt (2026-07-17) · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

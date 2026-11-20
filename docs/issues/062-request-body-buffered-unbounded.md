@@ -1,7 +1,7 @@
 # Slice 062 — `@Idempotent` request bodies are buffered fully into memory with no size limit
 
 > Source: system analysis (2026-11-19) · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

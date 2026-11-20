@@ -1,7 +1,7 @@
 # Slice 034 — Core refactor: route/handler generalization + messaging-ready primitives
 
 > Source: docs/prd/messaging-extension.md · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

@@ -1,7 +1,7 @@
 # Slice 039 — Kafka missing/invalid key → dead-letter
 
 > Source: docs/prd/messaging-extension.md · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

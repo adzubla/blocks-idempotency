@@ -1,7 +1,7 @@
 # Slice 035 — Kafka happy-path dedupe-skip (foundation)
 
 > Source: docs/prd/messaging-extension.md · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

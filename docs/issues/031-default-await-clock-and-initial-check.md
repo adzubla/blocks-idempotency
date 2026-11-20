@@ -1,7 +1,7 @@
 # Slice 031 — Default `await()` ignores the injectable Clock and sleeps before its first check
 
 > Source: bug hunt (2026-07-17) · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

@@ -1,7 +1,7 @@
 # Slice 048 — Extract `blocks-idempotency-messaging-core`
 
 > Source: docs/prd/messaging-extension.md · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

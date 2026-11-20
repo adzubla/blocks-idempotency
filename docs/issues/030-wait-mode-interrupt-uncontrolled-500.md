@@ -1,7 +1,7 @@
 # Slice 030 — Interrupt during WAIT-mode polling escapes as an uncontrolled 500
 
 > Source: bug hunt (2026-07-17) · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

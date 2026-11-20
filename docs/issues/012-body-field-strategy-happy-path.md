@@ -1,7 +1,7 @@
 # Slice 012 — Body-field strategy: happy-path replay
 
 > Source: docs/prd/idempotency-library.md · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

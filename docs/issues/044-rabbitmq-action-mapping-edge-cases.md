@@ -1,7 +1,7 @@
 # Slice 044 — RabbitMQ action-mapping edge cases
 
 > Source: docs/prd/messaging-extension.md · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

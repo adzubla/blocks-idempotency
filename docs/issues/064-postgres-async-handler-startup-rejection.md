@@ -1,7 +1,7 @@
 # Slice 064 — Reject async `@Idempotent` handlers on the Postgres store at startup
 
 > Source: system analysis (2026-11-19) · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

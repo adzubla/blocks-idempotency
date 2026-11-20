@@ -1,7 +1,7 @@
 # Slice 053 — Postgres store wired into the JMS module end-to-end
 
 > Source: docs/prd/messaging-extension.md · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

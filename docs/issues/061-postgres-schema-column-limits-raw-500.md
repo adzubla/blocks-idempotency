@@ -1,7 +1,7 @@
 # Slice 061 — Postgres column limits narrower than accepted input → raw 500
 
 > Source: system analysis (2026-11-19) · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

@@ -1,7 +1,7 @@
 # Slice 065 — Postgres: blocked duplicate requests can exhaust the connection pool
 
 > Source: system analysis (2026-11-19) · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 

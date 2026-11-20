@@ -1,7 +1,7 @@
 # Slice 060 — Fingerprint ignores the query string → different requests replay instead of 422
 
 > Source: system analysis (2026-11-19) · Type: AFK
-> Status: ready-for-agent
+> Status: done
 
 ## What to build
 
