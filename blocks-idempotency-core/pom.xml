@@ -32,7 +32,7 @@
             <artifactId>json-path</artifactId>
         </dependency>
 
-        <!-- Metrics: outcome counters (replay/collision/concurrency/fail-open) -->
+        <!-- Metrics: the idempotency.outcomes counter -->
         <dependency>
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-core</artifactId>
@@ -45,6 +45,7 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Test: JUnit, AssertJ, Mockito, Spring Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

@@ -40,13 +40,14 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- Test: JUnit, AssertJ, Mockito, Spring Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
 
-        <!-- @AutoConfigureMockMvc moved here in Spring Boot 4.0's per-tech test split -->
+        <!-- Test: @AutoConfigureMockMvc moved here in Spring Boot 4.0's per-tech test split -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-webmvc-test</artifactId>

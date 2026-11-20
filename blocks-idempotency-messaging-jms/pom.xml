@@ -36,13 +36,14 @@
             <artifactId>aspectjweaver</artifactId>
         </dependency>
 
+        <!-- Test: JUnit, AssertJ, Mockito, Spring Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
 
-        <!-- Embedded in-VM ActiveMQ Artemis broker for the end-to-end listener test -->
+        <!-- Test: embedded in-VM ActiveMQ Artemis broker for the end-to-end listener test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-artemis</artifactId>

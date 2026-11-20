@@ -12,7 +12,7 @@
 
     <artifactId>blocks-idempotency-messaging-core</artifactId>
     <name>Idempotency :: Messaging :: Core</name>
-    <description>Broker-neutral AOP advice skeleton, key-factory delegation, and startup-validation rules shared by the Kafka and RabbitMQ modules</description>
+    <description>Broker-neutral AOP advice skeleton, key-factory delegation, and startup-validation rules shared by the Kafka, RabbitMQ and JMS modules</description>
 
     <dependencies>
         <dependency>
@@ -28,6 +28,7 @@
             <artifactId>aspectjweaver</artifactId>
         </dependency>
 
+        <!-- Test: JUnit, AssertJ, Mockito, Spring Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

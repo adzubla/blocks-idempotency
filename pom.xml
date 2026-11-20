@@ -24,7 +24,7 @@
     <packaging>pom</packaging>
 
     <name>Idempotency :: Parent</name>
-    <description>Generic idempotency for Spring Boot REST services</description>
+    <description>Idempotency for Spring Boot REST endpoints and Kafka, RabbitMQ and JMS listeners, backed by Redis or Postgres</description>
 
     <properties>
         <maven.compiler.release>17</maven.compiler.release>

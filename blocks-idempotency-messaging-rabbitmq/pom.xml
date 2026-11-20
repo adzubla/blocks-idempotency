@@ -31,13 +31,14 @@
             <artifactId>aspectjweaver</artifactId>
         </dependency>
 
+        <!-- Test: JUnit, AssertJ, Mockito, Spring Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
 
-        <!-- Real broker (Testcontainers) for the end-to-end listener test -->
+        <!-- Test: real broker (Testcontainers) for the end-to-end listener test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-amqp</artifactId>

@@ -31,13 +31,14 @@
             <artifactId>aspectjweaver</artifactId>
         </dependency>
 
+        <!-- Test: JUnit, AssertJ, Mockito, Spring Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
 
-        <!-- Embedded broker for the end-to-end listener test -->
+        <!-- Test: embedded Kafka broker for the end-to-end listener test -->
         <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka-test</artifactId>
