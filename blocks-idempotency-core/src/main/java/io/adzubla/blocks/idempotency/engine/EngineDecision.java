@@ -8,8 +8,9 @@ import java.time.Duration;
 /**
  * Outcome of {@link IdempotencyEngine#before}. Proceed to execute the handler,
  * replay a completed record, reject a fingerprint mismatch, reject or wait on
- * a concurrent in-progress duplicate, apply the store-failure posture, or
- * report a completed-but-not-replayable record.
+ * a concurrent in-progress duplicate, apply the store-failure posture,
+ * report a completed-but-not-replayable record, or report a completed record
+ * that never held a response (a messaging duplicate to skip).
  */
 public sealed interface EngineDecision {
 
@@ -45,13 +46,22 @@ public sealed interface EngineDecision {
     /**
      * The effect completed but its response isn't replayable (the body was
      * over {@code max-body-size} at completion time, or nothing could be
-     * captured because the web capture filter wasn't in the chain; messaging
-     * callers always complete with {@code CachedResponse.empty()}, so it is
-     * their routine outcome for a duplicate - see ADR 0004); the caller
+     * captured because the web capture filter wasn't in the chain); the caller
      * should reject with 409, terminal, without executing or replaying, and
-     * no {@code Retry-After} - retrying can never succeed.
+     * no {@code Retry-After} - retrying can never succeed. An error condition,
+     * unlike {@link AlreadyProcessed}.
      */
     record Unavailable() implements EngineDecision {
+    }
+
+    /**
+     * A completed record exists that holds no response because its caller never
+     * captures one (the Kafka/RabbitMQ/JMS messaging advice completes every record
+     * with {@code CachedResponse.empty()}, ADR 0004). The routine outcome for a
+     * duplicate delivery: the caller should skip it without executing. Not an
+     * error, and not a {@link Replay}.
+     */
+    record AlreadyProcessed() implements EngineDecision {
     }
 
     /**

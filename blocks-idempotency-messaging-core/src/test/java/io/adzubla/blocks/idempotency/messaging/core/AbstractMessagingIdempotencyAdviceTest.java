@@ -6,6 +6,7 @@ import io.adzubla.blocks.idempotency.annotation.Idempotent.WhenInProgress;
 import io.adzubla.blocks.idempotency.config.IdempotencyProperties;
 import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
 import io.adzubla.blocks.idempotency.fingerprint.Fingerprint;
+import io.adzubla.blocks.idempotency.metrics.IdempotencyMetrics;
 import io.adzubla.blocks.idempotency.metrics.NoOpIdempotencyMetrics;
 import io.adzubla.blocks.idempotency.model.EffectiveKey;
 import io.adzubla.blocks.idempotency.model.RecordState;
@@ -25,6 +26,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -74,6 +77,22 @@ class AbstractMessagingIdempotencyAdviceTest {
 
         assertThat(invocations.get()).isEqualTo(1);
         assertThat(second).isNull();
+    }
+
+    @Test
+    void aSkippedDuplicateIsCountedAsDuplicateSkippedNotAsAnError() throws Throwable {
+        // Issue 068: a routine duplicate delivery is neither a replay nor the HTTP
+        // "response can't be replayed" error.
+        IdempotencyMetrics metrics = mock(IdempotencyMetrics.class);
+        advice = new TestAdvice(new IdempotencyEngineRegistry(Map.of(InMemoryIdempotencyStore.QUALIFIER, store),
+                properties.getPollInterval(), properties.getPollJitter(), metrics), properties);
+
+        advice.handle(joinPointFor(delivery("key-skip", "{}"), "onMessage"));
+        advice.handle(joinPointFor(delivery("key-skip", "{}"), "onMessage"));
+
+        verify(metrics).recordDuplicateSkipped(DESTINATION, LISTENER_ID);
+        verify(metrics, never()).recordResponseUnavailable(DESTINATION, LISTENER_ID);
+        verify(metrics, never()).recordReplay(DESTINATION, LISTENER_ID);
     }
 
     @Test

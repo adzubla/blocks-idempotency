@@ -157,6 +157,12 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
         if (decision instanceof EngineDecision.Unavailable) {
             throw new IdempotencyResponseUnavailableException();
         }
+        if (decision instanceof EngineDecision.AlreadyProcessed) {
+            // Only a caller that completes with CachedResponse.empty() (the messaging advice) gets this;
+            // HTTP always completes with the real response, so reaching here is a bug, not a duplicate.
+            throw new IllegalStateException("Unexpected AlreadyProcessed decision for " + request.getMethod() + " "
+                    + request.getRequestURI() + ": an HTTP record was completed without a response");
+        }
         if (decision instanceof EngineDecision.FailClosed) {
             throw new IdempotencyFailClosedException();
         }

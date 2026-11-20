@@ -114,7 +114,7 @@ public abstract class AbstractMessagingIdempotencyAdvice {
             // The store is down and the posture is fail-open: run the listener unprotected.
             return joinPoint.proceed();
         }
-        if (decision instanceof EngineDecision.Replay || decision instanceof EngineDecision.Unavailable) {
+        if (decision instanceof EngineDecision.AlreadyProcessed) {
             log.debug("Duplicate delivery acked without re-invoking the listener: destination={} listener={} key={}",
                     key.route(), key.handler(), key.value());
             return null;

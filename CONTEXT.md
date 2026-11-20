@@ -78,7 +78,7 @@ not stacked checks: each request uses one strategy and produces one effective ke
   server beyond that charset.
 - **Replayed response**: signaled with header `Idempotency-Replayed: true` +
   metrics (one counter per outcome: replay, collision, concurrency, fail-open,
-  fail-closed, response-unavailable). Headers reproduced
+  fail-closed, response-unavailable, duplicate-skipped). Headers reproduced
   via a **denylist** of volatile ones; `Set-Cookie` is **always** blocked.
 - **Unavailable response**: when the effect completed but the response can't be
   replayed (body over `max-body-size`, or the response-capture filter missing from the chain), the key is
@@ -92,3 +92,5 @@ not stacked checks: each request uses one strategy and produces one effective ke
   handler. The key comes from a message header or body field; the HTTP statuses
   become broker actions (dead-letter, ack-and-skip, nack/redelivery) and `WAIT`
   is not supported (see `docs/adr/0005`, `docs/prd/messaging-extension.md`).
+  A duplicate of an already-processed delivery is acked and skipped and counted
+  as `duplicate_skipped`, not as `response_unavailable`.

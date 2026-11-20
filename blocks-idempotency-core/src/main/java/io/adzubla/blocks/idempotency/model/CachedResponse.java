@@ -13,19 +13,27 @@ import java.util.Objects;
  */
 public record CachedResponse(int status, Map<String, List<String>> headers, byte[] body) {
 
+    /** The status of the {@link #empty()} sentinel. No HTTP response has it, so a real response is never mistaken for the sentinel. */
+    private static final int EMPTY_STATUS = 0;
+
     /**
      * Sentinel for "completed, nothing to cache" - used by a caller with no
      * response to capture (the Kafka/RabbitMQ/JMS messaging advice, which completes a
      * record purely to mark it done, not to replay anything). Since {@link
-     * #hasBody()} is false, {@code IdempotencyEngine#decisionForCompleted}
-     * resolves a record completed with this to {@code EngineDecision.Unavailable}
-     * - for HTTP that decision means a terminal error (oversized body, or no
-     * capture filter), but a caller that always completes with this sentinel will see
-     * {@code Unavailable} as its routine, expected outcome instead (see ADR
-     * 0004), not an error to surface to the end user.
+     * #isEmpty()} is true for it, {@code IdempotencyEngine#decisionForCompleted}
+     * resolves a record completed with this to {@code EngineDecision.AlreadyProcessed}
+     * - the routine "skip this duplicate" outcome (see ADR 0004) - and not to
+     * {@code EngineDecision.Unavailable}, which is the HTTP error for a response that
+     * should have been replayable but wasn't (oversized body, or no capture filter).
+     * Those carry the real response status, so the two never look alike.
      */
     public static CachedResponse empty() {
-        return new CachedResponse(0, Map.of(), null);
+        return new CachedResponse(EMPTY_STATUS, Map.of(), null);
+    }
+
+    /** Whether this is the {@link #empty()} sentinel: a record completed with no response to capture at all. */
+    public boolean isEmpty() {
+        return status == EMPTY_STATUS && body == null;
     }
 
     /** Whether a replayable body is present. */

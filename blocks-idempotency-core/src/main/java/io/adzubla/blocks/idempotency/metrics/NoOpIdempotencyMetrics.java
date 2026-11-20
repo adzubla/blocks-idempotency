@@ -37,4 +37,8 @@ public final class NoOpIdempotencyMetrics implements IdempotencyMetrics {
     @Override
     public void recordResponseUnavailable(String route, String handler) {
     }
+
+    @Override
+    public void recordDuplicateSkipped(String route, String handler) {
+    }
 }

@@ -110,11 +110,28 @@ class IdempotencyEngineMetricsTest {
         EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-9");
         EngineDecision proceed = engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
         String fenceToken = ((EngineDecision.Proceed) proceed).fenceToken();
-        engine.complete(key, fenceToken, CachedResponse.empty(), responseTtl);
+        engine.complete(key, fenceToken, new CachedResponse(201, Map.of(), null), responseTtl);
 
         engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
 
         assertThat(counterValue("response_unavailable")).isEqualTo(1.0);
+        assertThat(registry.find(METRIC_NAME).tag(TAG_OUTCOME, "duplicate_skipped").counter()).isNull();
+    }
+
+    @Test
+    void duplicateOfARecordCompletedWithTheEmptySentinelIncrementsDuplicateSkippedNotResponseUnavailable() {
+        // Messaging completes every record with CachedResponse.empty() (ADR 0004):
+        // a repeat is the routine skip, not the HTTP "response can't be replayed" error.
+        EffectiveKey key = new EffectiveKey("orders", "orders-listener", "", "key-12");
+        EngineDecision proceed = engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
+        engine.complete(key, ((EngineDecision.Proceed) proceed).fenceToken(), CachedResponse.empty(), responseTtl);
+
+        engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
+        engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
+
+        assertThat(counterValue("duplicate_skipped", "orders", "orders-listener")).isEqualTo(2.0);
+        assertThat(registry.find(METRIC_NAME).tag(TAG_OUTCOME, "response_unavailable").counter()).isNull();
+        assertThat(registry.find(METRIC_NAME).tag(TAG_OUTCOME, "replay").counter()).isNull();
     }
 
     @Test

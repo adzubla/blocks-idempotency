@@ -139,5 +139,9 @@ class IdempotencyMetricsAutoConfigurationTest {
         @Override
         public void recordResponseUnavailable(String route, String handler) {
         }
+
+        @Override
+        public void recordDuplicateSkipped(String route, String handler) {
+        }
     }
 }

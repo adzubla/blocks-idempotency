@@ -126,16 +126,21 @@ public class IdempotencyEngine {
      * capture filter missing from the chain - see {@link CachedResponse}), surfaced to the client as
      * a non-retryable 409. A caller that always completes a record with
      * {@link CachedResponse#empty()} (no response to cache at all - the
-     * Kafka/RabbitMQ/JMS messaging advice, per ADR 0004) will see every completed
-     * duplicate resolve to {@code Unavailable} here, never {@code Replay} -
-     * that's its routine, expected outcome for a duplicate delivery, not an
-     * error condition to propagate.
+     * Kafka/RabbitMQ/JMS messaging advice, per ADR 0004) sees every completed
+     * duplicate resolve to {@code AlreadyProcessed}, never {@code Replay} or
+     * {@code Unavailable} - the routine "skip this duplicate" outcome, counted
+     * as {@code duplicate_skipped} rather than as an error.
      */
     private EngineDecision decisionForCompleted(EffectiveKey key, CachedResponse response) {
         if (response != null && response.hasBody()) {
             log.debug("Replaying cached response for idempotency key: {} {} key={}", key.route(), key.handler(), key.value());
             metrics.recordReplay(key.route(), key.handler());
             return new EngineDecision.Replay(response);
+        }
+        if (response != null && response.isEmpty()) {
+            log.debug("Duplicate of an already-processed key, skipping: {} {} key={}", key.route(), key.handler(), key.value());
+            metrics.recordDuplicateSkipped(key.route(), key.handler());
+            return new EngineDecision.AlreadyProcessed();
         }
         log.debug("Idempotency response unavailable (not replayable): {} {} key={}", key.route(), key.handler(), key.value());
         metrics.recordResponseUnavailable(key.route(), key.handler());

@@ -14,6 +14,14 @@ class CachedResponseTest {
     }
 
     @Test
+    void onlyTheSentinelIsEmpty() {
+        assertThat(CachedResponse.empty().isEmpty()).isTrue();
+        // A real response without a body (oversized, or no capture filter) carries its status.
+        assertThat(new CachedResponse(201, Map.of(), null).isEmpty()).isFalse();
+        assertThat(new CachedResponse(204, Map.of(), new byte[0]).isEmpty()).isFalse();
+    }
+
+    @Test
     void emptyHasNoHeaders() {
         assertThat(CachedResponse.empty().headers()).isEmpty();
     }

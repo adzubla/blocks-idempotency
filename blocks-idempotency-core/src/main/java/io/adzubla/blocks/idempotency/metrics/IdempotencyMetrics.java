@@ -6,10 +6,11 @@ package io.adzubla.blocks.idempotency.metrics;
  * REJECT, WAIT-timeout, or key-gone), a fail-open activation (store
  * unavailable, request let through unprotected), a fail-closed activation
  * (store unavailable, request rejected with 503 - the counterpart to
- * fail-open), and a completed-but-not-replayable record (409, no {@code
+ * fail-open), a completed-but-not-replayable record (409, no {@code
  * Retry-After} - a response over {@code max-body-size}, or no capture filter in
- * the chain).
- * The last two aren't in the original PRD list but share the same
+ * the chain), and a skipped duplicate delivery (messaging: nothing to replay, so
+ * the duplicate is acked and skipped).
+ * The last three aren't in the original PRD list but share the same
  * store-failure-posture / completed-record branches as the four that are.
  *
  * <p>Every method takes {@code route} and {@code handler} - the same identity
@@ -34,4 +35,11 @@ public interface IdempotencyMetrics {
     void recordFailClosed(String route, String handler);
 
     void recordResponseUnavailable(String route, String handler);
+
+    /**
+     * A duplicate delivery of an already-processed key was skipped (the messaging
+     * counterpart of a replay: there is no response to replay). A routine outcome,
+     * not an error.
+     */
+    void recordDuplicateSkipped(String route, String handler);
 }

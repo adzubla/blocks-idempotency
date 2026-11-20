@@ -342,19 +342,19 @@ class IdempotencyEngineTest {
     }
 
     @Test
-    void completedWithTheEmptySentinelIsReportedAsResponseUnavailable() {
-        // A future messaging caller always completes with CachedResponse.empty()
-        // (no response to cache - see ADR 0004): decisionForCompleted() must
-        // still route it through Unavailable, not throw or return Replay, since
-        // that's how a messaging adapter's translation layer tells "routine
-        // duplicate skip" (Unavailable) apart from "fresh reservation".
+    void completedWithTheEmptySentinelIsReportedAsAlreadyProcessed() {
+        // The messaging advice always completes with CachedResponse.empty()
+        // (no response to cache - see ADR 0004): a repeat is neither a Replay
+        // (nothing to replay) nor the HTTP Unavailable error (a response that
+        // should have been replayable but wasn't). It is AlreadyProcessed, the
+        // routine "skip this duplicate" outcome.
         EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-29");
         String fenceToken = proceedToken(engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout));
         engine.complete(key, fenceToken, CachedResponse.empty(), responseTtl);
 
         EngineDecision decision = engine.before(key, "fp", lockTtl, openPosture, rejectMode, waitTimeout);
 
-        assertThat(decision).isInstanceOf(EngineDecision.Unavailable.class);
+        assertThat(decision).isInstanceOf(EngineDecision.AlreadyProcessed.class);
     }
 
     @Test

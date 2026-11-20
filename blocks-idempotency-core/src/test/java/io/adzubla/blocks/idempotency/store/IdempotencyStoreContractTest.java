@@ -106,6 +106,21 @@ public abstract class IdempotencyStoreContractTest {
     }
 
     @Test
+    void aRecordCompletedWithTheEmptySentinelStaysEmptyAcrossARoundTrip() {
+        // Messaging completes with CachedResponse.empty(); the engine tells that routine
+        // duplicate apart from an unreplayable HTTP response by CachedResponse.isEmpty(),
+        // so every store must hand the sentinel back unchanged (issue 068).
+        EffectiveKey key = key("k4-empty");
+        String fenceToken = store.reserve(key, "fp", STABLE_TTL).fenceToken().orElseThrow();
+
+        store.complete(key, fenceToken, CachedResponse.empty(), STABLE_TTL);
+
+        CachedResponse found = store.find(key).orElseThrow().response();
+        assertThat(found.isEmpty()).isTrue();
+        assertThat(store.reserve(key, "fp", STABLE_TTL).existing().orElseThrow().response().isEmpty()).isTrue();
+    }
+
+    @Test
     void releaseFreesTheKeyForAFreshReservation() {
         EffectiveKey key = key("k5");
         String fenceToken = store.reserve(key, "fp", STABLE_TTL).fenceToken().orElseThrow();

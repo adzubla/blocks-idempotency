@@ -5,7 +5,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 
 /**
  * Records each outcome as one Micrometer counter, {@value #METRIC_NAME},
- * dimensioned by an {@value #TAG_OUTCOME} tag rather than six separate
+ * dimensioned by an {@value #TAG_OUTCOME} tag rather than seven separate
  * counter names - the idiomatic Micrometer shape for an enumerable outcome
  * (sum/group by outcome in a dashboard) - plus {@value #TAG_ROUTE}/
  * {@value #TAG_HANDLER} so an outcome can be attributed to a specific
@@ -72,5 +72,10 @@ public final class MicrometerIdempotencyMetrics implements IdempotencyMetrics {
     @Override
     public void recordResponseUnavailable(String route, String handler) {
         increment("response_unavailable", route, handler);
+    }
+
+    @Override
+    public void recordDuplicateSkipped(String route, String handler) {
+        increment("duplicate_skipped", route, handler);
     }
 }

@@ -100,13 +100,16 @@ This has a non-obvious, broker-agnostic consequence worth documenting
 explicitly so it isn't "rediscovered" as a bug later:
 `IdempotencyEngine.decisionForCompleted()` only returns `Replay` when
 `response.hasBody()` is true; since messaging's sentinel is always bodyless,
-**every completed messaging duplicate resolves to `EngineDecision.Unavailable`,
+**every completed messaging duplicate resolves to `EngineDecision.AlreadyProcessed`,
 never `Replay`.** In HTTP, `Unavailable` is a terminal error (oversized body,
-missing capture filter — mapped to a 409 the client shouldn't retry). In messaging,
-because of the sentinel choice above, `Unavailable` becomes **the ordinary,
-expected outcome for every routine duplicate skip** — not an error. See the
-action-mapping table below: it's mapped to ack-and-skip, the same action
-`Replay` would have gotten had dedupe-only not been the v1 scope.
+missing capture filter — mapped to a 409 the client shouldn't retry) and is
+counted as `response_unavailable`. In messaging, the sentinel
+(`CachedResponse.empty()`, status `0`) resolves to `AlreadyProcessed`, **the
+ordinary, expected outcome for every routine duplicate skip** — not an error,
+counted as `duplicate_skipped`. (Originally this reused `Unavailable`; see
+[issue 068](../issues/068-messaging-duplicates-counted-as-response-unavailable.md).)
+See the action-mapping table below: it's mapped to ack-and-skip, the same
+action `Replay` would have gotten had dedupe-only not been the v1 scope.
 
 ### 3. Generalize `EffectiveKey`/`Fingerprint`/Postgres schema: `route` + `handler` (done — Slice 034)
 
@@ -167,7 +170,7 @@ no rework needed there, only the translation layer:
 | Outcome | HTTP today | Messaging action | Why |
 |---|---|---|---|
 | `IN_PROGRESS` (REJECT) | 409 + Retry-After | **nack (redeliver)** — `DeliveryInProgressException` | Originally ack-and-skip, on the reasoning that the primary's own message is natively redelivered if it fails. Changed by [issue 059](../issues/059-redis-messaging-redelivery-acked-while-locked.md): with a TTL-based store (Redis) a crashed primary, or one whose release couldn't reach the store, leaves a stale `IN_PROGRESS` lock, and that redelivery was itself acked away, losing the message. Failing the delivery keeps it with the broker until the key resolves. The cost is a redelivery loop for a genuinely concurrent duplicate, bounded by the container's retry/backoff policy. See ADR 0005. |
-| `EngineDecision.Unavailable` (every completed dupe — see §2) | 409 terminal | **ack-and-skip** | Routine outcome in messaging, not an error — see §2. |
+| `EngineDecision.AlreadyProcessed` (every completed dupe — see §2) | n/a (HTTP never produces it; its unreplayable case is `Unavailable`, a terminal 409) | **ack-and-skip** | Routine outcome in messaging, not an error — see §2. |
 | `COLLISION` (fingerprint mismatch) | 422 | **dead-letter** | A key reused with a different payload is a producer bug or poison message — no consumer-side retry resolves it. |
 | `KEY_REQUIRED` / `KEY_INVALID` | 400 | **dead-letter** | A structurally bad message; broker-native redelivery can't fix a message that will never carry a valid key. |
 | `STORE_UNAVAILABLE` (`onStoreFailure=CLOSED`) | 503 | **nack-with-backoff** | Transient infrastructure trouble, not a poison message (dead-letter would be wrong) and it's unknown whether the effect already ran (ack-and-skip would risk silently losing the message). |

@@ -1,7 +1,7 @@
 # Slice 068 — Messaging duplicates are counted as `response_unavailable`
 
 > Source: documentation review (2026-11-20) · Type: AFK
-> Status: needs-triage
+> Status: done
 
 ## What to build
 
@@ -40,12 +40,26 @@ Candidate fixes, for triage:
 
 ## Acceptance criteria
 
-- [ ] An acked-and-skipped messaging duplicate no longer increments `response_unavailable`.
-- [ ] It increments a distinct outcome that the README documents as normal.
-- [ ] An HTTP response that can't be replayed still increments `response_unavailable`.
-- [ ] `MicrometerIdempotencyMetrics`, `NoOpIdempotencyMetrics`, the `IdempotencyMetrics` interface and the README outcome table are updated, and the "six counters" wording (properties javadoc, README, `CONTEXT.md`) matches.
-- [ ] A test per transport asserts the recorded outcome (engine level for HTTP and messaging).
+- [x] An acked-and-skipped messaging duplicate no longer increments `response_unavailable`.
+- [x] It increments a distinct outcome that the README documents as normal.
+- [x] An HTTP response that can't be replayed still increments `response_unavailable`.
+- [x] `MicrometerIdempotencyMetrics`, `NoOpIdempotencyMetrics`, the `IdempotencyMetrics` interface and the README outcome table are updated, and the "six counters" wording (properties javadoc, README, `CONTEXT.md`) matches.
+- [x] A test per transport asserts the recorded outcome (engine level for HTTP and messaging).
 
 ## Blocked by
 
 —
+
+## Comments
+
+- 2026-11-20 — Implemented. `CachedResponse.isEmpty()` identifies the
+  `empty()` sentinel (status `0`, no body); a real HTTP response without a body
+  always carries its status, so the two can't be confused. The engine returns a
+  new `EngineDecision.AlreadyProcessed` for the sentinel and records a new
+  `duplicate_skipped` outcome; `Unavailable` and `response_unavailable` are now
+  HTTP-only. `IdempotencyMetrics.recordDuplicateSkipped` is a `default` no-op so
+  an application's own `IdempotencyMetrics` bean keeps compiling. The messaging
+  advice treats `AlreadyProcessed` like the old `Unavailable` (ack and skip);
+  the web interceptor maps it to the same 409 as `Unavailable` (unreachable in
+  practice, since HTTP never completes with the sentinel). README, `CONTEXT.md`,
+  ADR 0004 and the messaging PRD are updated. The outcome count is now seven.

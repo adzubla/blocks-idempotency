@@ -27,13 +27,20 @@ Consequence traced through the engine: `IdempotencyEngine.complete(...)`
 keeps its exact signature (`CachedResponse response` stays a required
 param); messaging call sites always pass an empty/sentinel `CachedResponse`.
 Since `IdempotencyEngine.decisionForCompleted()` only returns `Replay` when
-`response.hasBody()` is true, every completed messaging duplicate resolves
-to `EngineDecision.Unavailable` instead — a decision type that means
-"terminal error, don't retry" in HTTP, but is the **ordinary, expected
-outcome for a routine duplicate skip** in messaging. This is deliberate
-reuse, not a bug: it avoids any change to the engine's public API, at the
-cost of a decision label whose meaning differs by transport. See
-`docs/prd/messaging-extension.md` §2 for the full mapping.
+`response.hasBody()` is true, a completed messaging duplicate can't be a
+`Replay`. It resolves to its own decision, `EngineDecision.AlreadyProcessed`
+(the routine "skip this duplicate" outcome), recorded as the
+`duplicate_skipped` metric. It is told apart from the HTTP
+`EngineDecision.Unavailable` ("terminal error, don't retry", the
+`response_unavailable` metric) by the sentinel itself: `CachedResponse.empty()`
+has status `0`, while a real HTTP response without a body carries its status.
+
+*Amended by [issue 068](../issues/068-messaging-duplicates-counted-as-response-unavailable.md):
+this originally reused `Unavailable` for the messaging skip, "a decision label
+whose meaning differs by transport". That made every routine duplicate count as
+`response_unavailable`, an abnormal-if-sustained outcome for HTTP. The two now
+have separate decisions and metrics.* See `docs/prd/messaging-extension.md` §2
+for the full mapping.
 
 ## Considered Options
 
@@ -51,6 +58,6 @@ cost of a decision label whose meaning differs by transport. See
   messaging adapter at all in v1 — not "optional," genuinely unnecessary.
 - Revisiting this later to support replay means giving messaging's
   `CachedResponse` real content (so `hasBody()` becomes true for those
-  records), which changes the `Unavailable`-vs-`Replay` split described
+  records), which changes the `AlreadyProcessed`-vs-`Replay` split described
   above — a deliberate, contained change to make if the need arises, not
   something this decision forecloses.
