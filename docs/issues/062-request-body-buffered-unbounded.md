@@ -1,7 +1,7 @@
 # Slice 062 — `@Idempotent` request bodies are buffered fully into memory with no size limit
 
 > Source: system analysis (2026-11-19) · Type: AFK
-> Status: needs-triage
+> Status: ready-for-agent
 
 ## What to build
 
@@ -24,10 +24,22 @@ Candidate fixes, for triage:
 
 ## Acceptance criteria
 
-- [ ] A request body over the configured limit is rejected (413) without being fully buffered.
-- [ ] A header-strategy request with a missing or invalid key is rejected without its body being read.
-- [ ] Fingerprinting and body-field resolution unchanged for bodies within the limit.
+- [x] A request body over the configured limit is rejected (413) without being fully buffered.
+- [x] A header-strategy request with a missing or invalid key is rejected without its body being read.
+- [x] Fingerprinting and body-field resolution unchanged for bodies within the limit.
 
 ## Blocked by
 
 —
+
+## Comments
+
+- 2026-11-20 — Triage: a new `idempotency.max-request-body-size`, 1MB by
+  default, independent of the response-side `max-body-size`.
+- Implemented: `CachedBodyHttpServletRequest.getBody(maxBytes)` rejects
+  immediately when `Content-Length` exceeds the limit, and otherwise reads at
+  most limit + 1 bytes. Either way it throws `IdempotencyRequestTooLargeException`
+  (413, new `RejectReason.REQUEST_TOO_LARGE` → `request_too_large`). The
+  interceptor resolves and validates a header key before buffering the body,
+  so a missing/invalid key or a `keyRequired=false` pass-through never reads
+  it. Covered in `CachedBodyHttpServletRequestTest` and `IdempotencyEndToEndTest`.

@@ -10,8 +10,8 @@ package io.adzubla.blocks.idempotency.engine;
  * Retry-After}) - note that decision is a zero-field record and doesn't
  * itself carry this value; the caller (see {@code IdempotencyInterceptor})
  * supplies it directly when handling that case. The remaining constants back
- * the {@code 400}/{@code 422}/{@code 503} exceptions, each fixed to a single
- * reason for its exception type - see {@code IdempotencyException#reason()}.
+ * the {@code 400}/{@code 413}/{@code 422}/{@code 503} exceptions, each fixed to a
+ * single reason for its exception type - see {@code IdempotencyException#reason()}.
  */
 public enum RejectReason {
 
@@ -27,12 +27,14 @@ public enum RejectReason {
     KEY_REQUIRED("key_required"),
     /** The raw key value exceeds the configured size limit or contains characters outside the allowed charset. */
     KEY_INVALID("key_invalid"),
-    /** The key was reused with a different payload (method+path+body fingerprint mismatch). */
+    /** The key was reused with a different payload (method+path+query+body fingerprint mismatch). */
     COLLISION("collision"),
     /** The store is unavailable and the resolved posture is {@code onStoreFailure=CLOSED}. */
-    STORE_UNAVAILABLE("store_unavailable");
+    STORE_UNAVAILABLE("store_unavailable"),
+    /** The request body exceeds {@code idempotency.max-request-body-size}, so it isn't buffered for fingerprinting. */
+    REQUEST_TOO_LARGE("request_too_large");
 
-    /** The header this enum's {@link #wireValue()} is written to on a 409 response. */
+    /** The header this enum's {@link #wireValue()} is written to on every non-2xx idempotency response. */
     public static final String HEADER_NAME = "Idempotency-Reject-Reason";
 
     private final String wireValue;

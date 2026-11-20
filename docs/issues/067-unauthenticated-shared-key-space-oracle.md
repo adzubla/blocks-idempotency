@@ -1,7 +1,7 @@
 # Slice 067 — Unauthenticated routes share one key space (existence oracle for body-field keys)
 
 > Source: system analysis (2026-11-19) · Type: AFK
-> Status: needs-triage
+> Status: ready-for-agent
 
 ## What to build
 
@@ -34,8 +34,16 @@ Candidate responses, for triage:
 
 ## Acceptance criteria
 
-- [ ] Triage decision recorded (document / startup warning / `wontfix`).
+- [x] Triage decision recorded (document / startup warning / `wontfix`).
 
 ## Blocked by
 
 —
+
+## Comments
+
+- 2026-11-20 — Triage: **document only**. Startup can't tell which routes are
+  unauthenticated, so a warning would be incomplete (it could only catch
+  `principal-enabled=false`). The risk and the guidance (use the body-field
+  strategy on authenticated routes, or with non-guessable identifiers) are
+  now in the README's key-strategy section.

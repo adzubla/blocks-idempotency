@@ -5,6 +5,7 @@ import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
 import io.adzubla.blocks.idempotency.messaging.core.AbstractMessagingIdempotencyAdvice;
 import io.adzubla.blocks.idempotency.messaging.core.MessageDelivery;
 import io.adzubla.blocks.idempotency.messaging.core.MessagingListenerId;
+import io.adzubla.blocks.idempotency.messaging.core.UnsupportedMessagePayloadException;
 import io.adzubla.blocks.idempotency.messaging.jms.key.JmsHeaderKeyStrategy;
 import jakarta.jms.BytesMessage;
 import jakarta.jms.Destination;
@@ -128,7 +129,9 @@ public class JmsIdempotencyAdvice extends AbstractMessagingIdempotencyAdvice {
                     bytes.reset();
                     return buffer;
                 }
-                return new byte[0];
+                throw new UnsupportedMessagePayloadException("@Idempotent @JmsListener " + listenerId + " on destination "
+                        + destination() + " received a " + message.getClass().getName() + ", but idempotency "
+                        + "fingerprints the raw payload: send a TextMessage or BytesMessage");
             } catch (JMSException e) {
                 throw wrap("read JMS message body", e);
             }

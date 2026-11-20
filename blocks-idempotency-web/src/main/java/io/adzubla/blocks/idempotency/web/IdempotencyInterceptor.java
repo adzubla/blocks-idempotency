@@ -29,8 +29,12 @@ import org.springframework.web.servlet.HandlerInterceptor;
 import org.springframework.web.util.ContentCachingResponseWrapper;
 import org.springframework.web.util.WebUtils;
 
+import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
@@ -102,8 +106,10 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
 
         IdempotencyPolicy policy = PolicyResolver.resolve(annotation, properties);
 
-        byte[] body = requestBody(request);
-        // Exactly one of header()/fieldPath() is set - validated at startup (Slice 010).
+        // Exactly one of header()/fieldPath() is set - validated at startup (Slice 010). A header
+        // key is resolved (and below, validated) before the body is touched, so a request that's
+        // rejected or passed through for its key alone never has its body buffered.
+        byte[] body = annotation.header().isEmpty() ? requestBody(request) : null;
         Optional<String> rawKey = annotation.header().isEmpty()
                 ? BodyFieldKeyStrategy.resolve(body, annotation.fieldPath())
                 : HeaderKeyStrategy.resolve(request, annotation.header());
@@ -121,9 +127,16 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
             throw new IdempotencyKeyInvalidException();
         }
 
+        if (body == null) {
+            body = requestBody(request);
+        }
+
         EffectiveKey key = HttpEffectiveKeyFactory.create(request, rawKey.get(), properties.getScope().isPrincipalEnabled(),
                 properties.getScope().getPrincipalClaim(), principalClaimResolver);
-        String fingerprint = Fingerprint.sha256(key.route(), key.handler(), body);
+        // The fingerprint's target is the route plus the canonical query (issue 060); the
+        // effective key's route stays the bare path.
+        String fingerprintTarget = key.route() + canonicalQuery(request);
+        String fingerprint = Fingerprint.sha256(fingerprintTarget, key.handler(), body);
 
         IdempotencyEngine engine = engineRegistry.engine(policy.store());
         EngineDecision decision = engine.before(key, fingerprint, properties.getLockTtl(), policy.onStoreFailure(),
@@ -229,16 +242,67 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
      * contributes nothing: such a request is keyed and deduplicated, but a
      * different upload under the same key is not detected as a collision.
      */
-    private static byte[] requestBody(HttpServletRequest request) {
-        String contentType = request.getContentType() == null ? "" : request.getContentType().toLowerCase(Locale.ROOT);
-        if (contentType.startsWith("application/x-www-form-urlencoded")) {
+    private byte[] requestBody(HttpServletRequest request) {
+        if (isForm(request)) {
             return canonicalForm(request.getParameterMap());
         }
-        if (contentType.startsWith("multipart/")) {
+        if (contentTypeOf(request).startsWith("multipart/")) {
             return NO_BODY;
         }
         CachedBodyHttpServletRequest cached = WebUtils.getNativeRequest(request, CachedBodyHttpServletRequest.class);
-        return cached != null ? cached.getBody() : NO_BODY;
+        return cached != null ? cached.getBody(properties.getMaxRequestBodySize().toBytes()) : NO_BODY;
+    }
+
+    /**
+     * The query string's contribution to the fingerprint: {@code "?"} plus its parameters in
+     * canonical order, or empty when there is none. The query is not part of the route (that is
+     * {@code getRequestURI()}), so without this two requests reusing a key with different
+     * query parameters would replay instead of colliding. Parameters are sorted by name (values
+     * keep their order), the same canonicalization as a form body, so reordering alone doesn't
+     * collide. A form post's parameters already include the query string, so it contributes
+     * nothing extra there. An absent query leaves the fingerprint exactly as before.
+     */
+    private static String canonicalQuery(HttpServletRequest request) {
+        String query = request.getQueryString();
+        if (query == null || query.isEmpty() || isForm(request)) {
+            return "";
+        }
+        Map<String, List<String>> parameters = new LinkedHashMap<>();
+        for (String pair : query.split("&")) {
+            if (pair.isEmpty()) {
+                continue;
+            }
+            int eq = pair.indexOf('=');
+            String name = decodeOrRaw(eq < 0 ? pair : pair.substring(0, eq));
+            String value = eq < 0 ? "" : decodeOrRaw(pair.substring(eq + 1));
+            parameters.computeIfAbsent(name, n -> new ArrayList<>()).add(value);
+        }
+        Map<String, String[]> asArrays = new LinkedHashMap<>();
+        parameters.forEach((name, values) -> asArrays.put(name, values.toArray(String[]::new)));
+        return "?" + new String(canonicalForm(asArrays), StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Decodes one query component, or keeps it as the raw text when it isn't valid
+     * percent-encoding ({@code %zz}). The fingerprint only needs to be deterministic, not to
+     * reject the request. A parameter without {@code =} and one with an empty value fingerprint
+     * the same, as do {@code +} and {@code %20}, mirroring how the container parses them.
+     */
+    private static String decodeOrRaw(String component) {
+        try {
+            return URLDecoder.decode(component, StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException malformed) {
+            return component;
+        }
+    }
+
+    private static boolean isForm(HttpServletRequest request) {
+        return contentTypeOf(request).startsWith("application/x-www-form-urlencoded");
+    }
+
+    private static String contentTypeOf(HttpServletRequest request) {
+        String contentType = request.getContentType();
+        return contentType == null ? "" : contentType.toLowerCase(Locale.ROOT);
     }
 
     private static byte[] canonicalForm(Map<String, String[]> parameters) {

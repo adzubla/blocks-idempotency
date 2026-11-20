@@ -1,7 +1,7 @@
 # Slice 060 — Fingerprint ignores the query string → different requests replay instead of 422
 
 > Source: system analysis (2026-11-19) · Type: AFK
-> Status: needs-triage
+> Status: ready-for-agent
 
 ## What to build
 
@@ -29,11 +29,24 @@ collision rather than treated as a new key.
 
 ## Acceptance criteria
 
-- [ ] Same key + same body + different query parameters → 422 collision.
-- [ ] Same key + same body + the same query parameters in a different order → replay (canonicalized).
-- [ ] Form-post behavior unchanged (query params not double-counted).
-- [ ] Messaging fingerprints unchanged.
+- [x] Same key + same body + different query parameters → 422 collision.
+- [x] Same key + same body + the same query parameters in a different order → replay (canonicalized).
+- [x] Form-post behavior unchanged (query params not double-counted).
+- [x] Messaging fingerprints unchanged.
 
 ## Blocked by
 
 —
+
+## Comments
+
+- 2026-11-20 — Implemented in `IdempotencyInterceptor`. For non-form requests the
+  canonical query (`?` + parameters sorted by name, values kept in order, same
+  canonicalization as a form body) is appended to the fingerprint's route input.
+  It doesn't touch the effective key. A request without a query string
+  fingerprints exactly as before, so existing records stay valid. A malformed
+  escape (`%zz`) is fingerprinted as raw text instead of failing the request.
+  Covered in `IdempotencyEndToEndTest`.
+- Rollout note: a request that *has* a query string gets a new fingerprint, so
+  a retry of such a request sent before the deploy and repeated after it,
+  within its TTL, gets a `422` instead of a replay.

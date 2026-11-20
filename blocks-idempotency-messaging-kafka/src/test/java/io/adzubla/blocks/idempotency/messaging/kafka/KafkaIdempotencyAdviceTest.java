@@ -7,6 +7,7 @@ import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
 import io.adzubla.blocks.idempotency.fingerprint.Fingerprint;
 import io.adzubla.blocks.idempotency.messaging.core.DeliveryInProgressException;
 import io.adzubla.blocks.idempotency.messaging.core.MessagingEffectiveKeyFactory;
+import io.adzubla.blocks.idempotency.messaging.core.UnsupportedMessagePayloadException;
 import io.adzubla.blocks.idempotency.metrics.NoOpIdempotencyMetrics;
 import io.adzubla.blocks.idempotency.model.EffectiveKey;
 import io.adzubla.blocks.idempotency.model.RecordState;
@@ -204,6 +205,23 @@ class KafkaIdempotencyAdviceTest {
         advice.aroundIdempotentListener(joinPointFor(record, OptionalKeyListener.class));
 
         assertThat(invocations.get()).isEqualTo(1);
+    }
+
+    @Test
+    void aDeserializedObjectPayloadFailsLoudlyInsteadOfBeingFingerprintedAsAnEmptyBody() throws Throwable {
+        RecordHeaders headers = new RecordHeaders();
+        headers.add(HEADER, "key-pojo".getBytes(StandardCharsets.UTF_8));
+        ConsumerRecord<String, Object> record = new ConsumerRecord<>("orders", 0, 0L, ConsumerRecord.NO_TIMESTAMP,
+                TimestampType.NO_TIMESTAMP_TYPE, ConsumerRecord.NULL_SIZE, ConsumerRecord.NULL_SIZE, "record-key",
+                java.util.Map.of("amount", 10), headers, Optional.empty());
+
+        assertThatThrownBy(() -> advice.aroundIdempotentListener(joinPointFor(record)))
+                .isInstanceOf(UnsupportedMessagePayloadException.class)
+                .hasMessageContaining("test-listener")
+                .hasMessageContaining("byte[]");
+
+        assertThat(invocations.get()).isZero();
+        assertThat(store.find(MessagingEffectiveKeyFactory.create("orders", "test-listener", "key-pojo"))).isEmpty();
     }
 
     private ProceedingJoinPoint joinPointFor(String idempotencyKey) throws Throwable {

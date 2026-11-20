@@ -20,7 +20,8 @@ import org.springframework.http.HttpStatus;
  */
 public sealed abstract class IdempotencyException extends RuntimeException
         permits IdempotencyKeyRequiredException, IdempotencyKeyInvalidException, IdempotencyCollisionException,
-                IdempotencyConflictException, IdempotencyResponseUnavailableException, IdempotencyFailClosedException {
+                IdempotencyConflictException, IdempotencyResponseUnavailableException, IdempotencyFailClosedException,
+                IdempotencyRequestTooLargeException {
 
     private final HttpStatus status;
     private final RejectReason reason;

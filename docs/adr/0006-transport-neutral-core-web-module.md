@@ -98,3 +98,12 @@ same load-bearing-ordering technique the store modules already use via
   `MeterRegistry` up through an `ObjectProvider` when it is created instead of
   `@ConditionalOnBean`, because Spring Boot's registry auto-configuration is
   ordered after `IdempotencyAutoConfiguration` and the condition never matched.
+- **The HTTP fingerprint covers the query string, and the buffered body is
+  bounded (2026-11-20, issues 060/062).** The query isn't part of the route
+  (`getRequestURI()`), so for non-form requests its canonical form (parameters
+  sorted by name) is added to the fingerprint input. A form post already
+  fingerprints its parameters, query included. Buffering reads at most
+  `idempotency.max-request-body-size`, and a header-strategy key is resolved and
+  validated before the body is read at all. Both stay in the web module: the
+  query string and the request body are HTTP concepts, so the transport-neutral
+  core is unchanged apart from the new `RejectReason` and the property.

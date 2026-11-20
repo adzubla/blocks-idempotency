@@ -45,7 +45,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.MOCK,
         classes = IdempotencyEndToEndTest.TestApplication.class,
-        properties = "idempotency.default-store=" + InMemoryIdempotencyStore.QUALIFIER)
+        properties = {"idempotency.default-store=" + InMemoryIdempotencyStore.QUALIFIER,
+                "idempotency.max-request-body-size=1KB"})
 @AutoConfigureMockMvc
 class IdempotencyEndToEndTest {
 
@@ -115,6 +116,121 @@ class IdempotencyEndToEndTest {
                 .andExpect(jsonPath("$.orderId").value(2));
 
         assertThat(handlerInvocations.get()).isEqualTo(2);
+    }
+
+    @Test
+    void sameKeyAndBodyWithADifferentQueryStringIsRejectedWith422() throws Exception {
+        mockMvc.perform(post("/orders?amount=100")
+                        .header(Idempotent.IDEMPOTENCY_KEY_HEADER, "key-query-collision")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"currency\":\"EUR\"}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/orders?amount=900")
+                        .header(Idempotent.IDEMPOTENCY_KEY_HEADER, "key-query-collision")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"currency\":\"EUR\"}"))
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(header().string("Idempotency-Reject-Reason", "collision"));
+
+        assertThat(handlerInvocations.get()).isEqualTo(1);
+    }
+
+    @Test
+    void sameQueryParametersInADifferentOrderReplay() throws Exception {
+        mockMvc.perform(post("/orders?amount=100&currency=EUR")
+                        .header(Idempotent.IDEMPOTENCY_KEY_HEADER, "key-query-order")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(post("/orders?currency=EUR&amount=100")
+                        .header(Idempotent.IDEMPOTENCY_KEY_HEADER, "key-query-order")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("Idempotency-Replayed", "true"));
+
+        assertThat(handlerInvocations.get()).isEqualTo(1);
+    }
+
+    @Test
+    void aRequestBodyOverTheConfiguredLimitIsRejectedWith413() throws Exception {
+        mockMvc.perform(post("/orders")
+                        .header(Idempotent.IDEMPOTENCY_KEY_HEADER, "key-too-large")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(jsonBodyOfAtLeast(2048)))
+                .andExpect(status().isContentTooLarge())
+                .andExpect(header().string("Idempotency-Reject-Reason", "request_too_large"));
+
+        assertThat(handlerInvocations.get()).isZero();
+    }
+
+    @Test
+    void anOversizedBodyIsRejectedWith413ViaTheBodyFieldStrategy() throws Exception {
+        mockMvc.perform(post("/orders-by-field")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(jsonBodyOfAtLeast(2048)))
+                .andExpect(status().isContentTooLarge())
+                .andExpect(header().string("Idempotency-Reject-Reason", "request_too_large"));
+
+        assertThat(handlerInvocations.get()).isZero();
+    }
+
+    @Test
+    void aMissingHeaderKeyIsRejectedOnTheKeyAloneWithoutBufferingAnOversizedBody() throws Exception {
+        // 400 key_required, not 413: the header key is checked before the body is ever read.
+        mockMvc.perform(post("/orders")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(jsonBodyOfAtLeast(2048)))
+                .andExpect(status().isBadRequest())
+                .andExpect(header().string("Idempotency-Reject-Reason", "key_required"));
+    }
+
+    @Test
+    void aMalformedQueryEscapeIsFingerprintedRatherThanFailingTheRequest() throws Exception {
+        // Set the raw query string directly: MockMvc would otherwise encode "%zz" as "%25zz".
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mockMvc.perform(post("/orders")
+                            .with(request -> {
+                                request.setQueryString("note=%zz");
+                                return request;
+                            })
+                            .header(Idempotent.IDEMPOTENCY_KEY_HEADER, "key-malformed-query")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{}"))
+                    .andExpect(status().isCreated());
+        }
+
+        // The second request replayed the first rather than failing on the bad escape.
+        assertThat(handlerInvocations.get()).isEqualTo(1);
+    }
+
+    @Test
+    void anInvalidHeaderKeyIsRejectedOnTheKeyAloneWithoutBufferingAnOversizedBody() throws Exception {
+        // 400 key_invalid, not 413: the header key is validated before the body is ever read.
+        mockMvc.perform(post("/orders")
+                        .header(Idempotent.IDEMPOTENCY_KEY_HEADER, "not a valid key!")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(jsonBodyOfAtLeast(2048)))
+                .andExpect(status().isBadRequest())
+                .andExpect(header().string("Idempotency-Reject-Reason", "key_invalid"));
+    }
+
+    @Test
+    void anOptionalKeyRequestWithoutAKeyPassesThroughWithoutBufferingAnOversizedBody() throws Exception {
+        // keyRequired=false and no key: unprotected pass-through, so the library never reads the
+        // body and its size limit doesn't apply - the handler gets the body as usual.
+        mockMvc.perform(post("/optional-orders")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(jsonBodyOfAtLeast(2048)))
+                .andExpect(status().isCreated());
+
+        assertThat(handlerInvocations.get()).isEqualTo(1);
+    }
+
+    private static String jsonBodyOfAtLeast(int bytes) {
+        return "{\"orderId\":\"o-1\",\"padding\":\"" + "x".repeat(bytes) + "\"}";
     }
 
     @Test

@@ -52,6 +52,14 @@ public class IdempotencyProperties {
     /** Responses larger than this are not cached (replay returns 409 response_unavailable). */
     private DataSize maxBodySize = DataSize.ofMegabytes(1);
 
+    /**
+     * Largest request body the library buffers on an {@code @Idempotent} endpoint, for the
+     * fingerprint and body-field key. A larger body is rejected with {@code 413} while
+     * buffering, without being read in full. Independent of {@code max-body-size}, which limits
+     * the cached response.
+     */
+    private DataSize maxRequestBodySize = DataSize.ofMegabytes(1);
+
     public static class Key {
         /** Raw key values longer than this are rejected (see {@link io.adzubla.blocks.idempotency.key.KeyFormat}). */
         private int maxLength = 255;
@@ -116,6 +124,8 @@ public class IdempotencyProperties {
     public void setPollJitter(Duration pollJitter) { this.pollJitter = pollJitter; }
     public DataSize getMaxBodySize() { return maxBodySize; }
     public void setMaxBodySize(DataSize maxBodySize) { this.maxBodySize = maxBodySize; }
+    public DataSize getMaxRequestBodySize() { return maxRequestBodySize; }
+    public void setMaxRequestBodySize(DataSize maxRequestBodySize) { this.maxRequestBodySize = maxRequestBodySize; }
     public Key getKey() { return key; }
     public Scope getScope() { return scope; }
     public Replay getReplay() { return replay; }

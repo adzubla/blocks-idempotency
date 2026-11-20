@@ -5,6 +5,7 @@ import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
 import io.adzubla.blocks.idempotency.messaging.core.AbstractMessagingIdempotencyAdvice;
 import io.adzubla.blocks.idempotency.messaging.core.MessageDelivery;
 import io.adzubla.blocks.idempotency.messaging.core.MessagingListenerId;
+import io.adzubla.blocks.idempotency.messaging.core.UnsupportedMessagePayloadException;
 import io.adzubla.blocks.idempotency.messaging.kafka.key.KafkaHeaderKeyStrategy;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.aspectj.lang.ProceedingJoinPoint;
@@ -108,7 +109,14 @@ public class KafkaIdempotencyAdvice extends AbstractMessagingIdempotencyAdvice {
             if (value instanceof String s) {
                 return s.getBytes(StandardCharsets.UTF_8);
             }
-            return new byte[0];
+            if (value == null) {
+                // A tombstone carries no payload - fingerprinted as an empty body.
+                return new byte[0];
+            }
+            throw new UnsupportedMessagePayloadException("@Idempotent @KafkaListener " + listenerId + " on topic "
+                    + record.topic() + " received a " + value.getClass().getName() + " value, but idempotency "
+                    + "fingerprints the raw payload: use a byte[] or String value deserializer "
+                    + "(ByteArrayDeserializer/StringDeserializer) and deserialize inside the listener");
         }
 
         @Override

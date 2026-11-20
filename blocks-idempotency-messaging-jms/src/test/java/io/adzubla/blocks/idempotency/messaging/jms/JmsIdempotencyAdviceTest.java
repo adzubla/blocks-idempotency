@@ -7,6 +7,7 @@ import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
 import io.adzubla.blocks.idempotency.fingerprint.Fingerprint;
 import io.adzubla.blocks.idempotency.messaging.core.DeliveryInProgressException;
 import io.adzubla.blocks.idempotency.messaging.core.MessagingEffectiveKeyFactory;
+import io.adzubla.blocks.idempotency.messaging.core.UnsupportedMessagePayloadException;
 import io.adzubla.blocks.idempotency.metrics.NoOpIdempotencyMetrics;
 import io.adzubla.blocks.idempotency.model.EffectiveKey;
 import io.adzubla.blocks.idempotency.model.RecordState;
@@ -236,6 +237,33 @@ class JmsIdempotencyAdviceTest {
         assertThat(invocations.get()).isEqualTo(1);
         // The read cursor advanced by readBytes() is rewound, leaving the body re-readable downstream.
         org.mockito.Mockito.verify(message).reset();
+    }
+
+    @Test
+    void anObjectMessagePayloadFailsLoudlyInsteadOfBeingFingerprintedAsAnEmptyBody() throws Throwable {
+        Queue queue = mock(Queue.class);
+        when(queue.getQueueName()).thenReturn(DESTINATION);
+        jakarta.jms.ObjectMessage message = mock(jakarta.jms.ObjectMessage.class);
+        when(message.getJMSDestination()).thenReturn(queue);
+        when(message.getStringProperty(HEADER)).thenReturn("key-object");
+
+        Method method = Listener.class.getDeclaredMethod("onMessage", Message.class);
+        MethodSignature signature = mock(MethodSignature.class);
+        when(signature.getMethod()).thenReturn(method);
+        ProceedingJoinPoint joinPoint = mock(ProceedingJoinPoint.class);
+        when(joinPoint.getSignature()).thenReturn(signature);
+        when(joinPoint.getArgs()).thenReturn(new Object[] {message});
+        when(joinPoint.proceed()).thenAnswer(invocation -> {
+            invocations.incrementAndGet();
+            return null;
+        });
+
+        assertThatThrownBy(() -> advice.aroundIdempotentListener(joinPoint))
+                .isInstanceOf(UnsupportedMessagePayloadException.class)
+                .hasMessageContaining(LISTENER_ID)
+                .hasMessageContaining("TextMessage");
+
+        assertThat(invocations.get()).isZero();
     }
 
     private ProceedingJoinPoint joinPointFor(String key, String body) throws Throwable {

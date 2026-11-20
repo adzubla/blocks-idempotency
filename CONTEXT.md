@@ -61,7 +61,8 @@ not stacked checks: each request uses one strategy and produces one effective ke
 - **Single policy** of idempotency for both key origins (same rules for collision,
   expiration, and scope). No separate term/mechanism for "deduplication".
 - **Collision** (same key, different body): reject with **422**, comparing a
-  *fingerprint* of method + path + normalized body.
+  *fingerprint* of method + path + query parameters (in canonical order) +
+  normalized body.
 - **Caching by status**: only **2xx**. Any non-2xx response, or the handler
   throwing, **releases the key** for a genuine retry.
 - **Expiration**: an expired key = a new key (re-executes). No tombstone, no

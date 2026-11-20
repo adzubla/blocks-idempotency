@@ -1,7 +1,7 @@
 # Slice 063 — Kafka/JMS: a deserialized payload is fingerprinted as an empty body
 
 > Source: system analysis (2026-11-19) · Type: AFK
-> Status: needs-triage
+> Status: ready-for-agent
 
 ## What to build
 
@@ -30,12 +30,28 @@ Candidate fixes, for triage:
 
 ## Acceptance criteria
 
-- [ ] A `fieldPath` listener on a deserialized-POJO topic either resolves its
+- [x] A `fieldPath` listener on a deserialized-POJO topic either resolves its
       key or fails loudly with a clear explanation, never by silently
       dead-lettering every message.
-- [ ] A header-strategy listener detects a payload collision regardless of value
-      type, or the limitation is documented and warned about.
+- [x] A header-strategy listener detects a payload collision regardless of value
+      type, or the limitation is documented and warned about. (It fails
+      loudly instead of running unprotected; documented in README §5.2/§5.4.)
 
 ## Blocked by
 
 —
+
+## Comments
+
+- 2026-11-20 — Triage: **fail loudly** rather than re-serializing objects to
+  JSON (that would tie the fingerprint to Jackson's view of each class) or
+  only warning.
+- Implemented: the Kafka and JMS `body()` methods throw the new public
+  `UnsupportedMessagePayloadException` (messaging-core), naming the listener
+  and the fix. This covers a Kafka value that isn't `byte[]`/`String` (a
+  `null` tombstone is still an empty body) and a JMS message that isn't a
+  `TextMessage`/`BytesMessage` (a body-less plain `Message` included). The
+  delivery fails rather than being acked as a success. What happens next is
+  the container's error handling (retry, then dead-letter or log-and-skip),
+  so the docs suggest classifying it as not retryable. RabbitMQ always sees
+  the raw `Message` and is unaffected. Covered in `KafkaIdempotencyAdviceTest` and `JmsIdempotencyAdviceTest`.

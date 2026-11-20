@@ -131,6 +131,9 @@ idempotency.poll-interval=100ms
 idempotency.poll-jitter=50ms
 # responses over this size aren't cached; a replay then gets 409 response_unavailable
 idempotency.max-body-size=1MB
+# request bodies the library buffers (fingerprint, body-field key) over this size get
+# 413 request_too_large, rejected while buffering rather than read in full
+idempotency.max-request-body-size=1MB
 # max length of the raw key value; longer values, or values outside the fixed
 # charset [A-Za-z0-9_.:-]+, are rejected with 400
 idempotency.key.max-length=255
@@ -243,7 +246,9 @@ above are not stacked checks, and they feed the same underlying mechanism
 under the same policy.
 
 **Fingerprint** is a separate, related concept: a hash of method/route (or
-destination) plus the normalized request/message body. It's not part of the
+destination) plus the normalized request/message body. For HTTP it also covers
+the query string, with parameters in sorted order, so reusing a key with
+different query parameters is a collision. It's not part of the
 effective key — it's compared against what was stored for that key on a
 repeat, to detect the same key being reused for a *different* payload. A
 mismatch is a collision (`422` for HTTP, dead-lettered for messaging), not a
@@ -281,6 +286,15 @@ plumbing they have to add. The requirement is that the field is
 **business-unique per intent**: if two logically different operations could
 ever share that field's value, they'll collide (`422`) or dedupe into each
 other incorrectly.
+
+**On an unauthenticated route, a body-field key is shared by every anonymous
+caller.** Without a principal, the key is scoped to the endpoint and the field
+value alone. Anyone who can guess an ID can then probe it: `201` means it was
+never submitted, `422` means it was (with a different body), `409` means it's
+in flight, and an identical body gets the original response replayed. The same
+applies everywhere with `idempotency.scope.principal-enabled=false`. Use the
+body-field strategy on authenticated routes, or point it at an identifier that
+isn't guessable, such as a UUID or ULID rather than a sequential order number.
 
 **Either way, keep the key scoped to one intent, not shared across
 unrelated ones.** Don't reuse the same key for two operations that happen
@@ -393,6 +407,15 @@ Web-specific global configuration is `idempotency.scope.principal-enabled` /
 - **Multipart requests** are keyed and deduplicated, but the body is not
   part of the fingerprint: a different upload sent under the same key is
   replayed as a duplicate, not rejected as a collision.
+- **Request bodies are buffered up to `idempotency.max-request-body-size`**
+  (1MB by default). This covers every body the library reads itself (JSON
+  and other raw bodies); a form post's parameters are parsed by the
+  container and bounded by its own limit (e.g. Tomcat's `maxPostSize`). A larger body is rejected with `413 request_too_large`
+  as soon as the limit is passed (or before reading, when `Content-Length`
+  already exceeds it), so it's never held in memory in full. With the header
+  strategy, the key is resolved and validated first: a request missing its
+  key, or passing through with `keyRequired = false`, never has its body
+  buffered.
 - **Async handlers** (`CompletableFuture`, `DeferredResult`, `Callable`) are
   supported with the Redis and in-memory stores: the key is reserved once,
   and the record is completed or released with the asynchronous result.
@@ -418,6 +441,7 @@ reproduces the original captured response verbatim.
 | `422`                 | Same key, different payload (fingerprint collision)                               | `IdempotencyCollisionException`           | `collision`                          | none                                   | empty                  |
 | `400`                 | Key required but missing                                                          | `IdempotencyKeyRequiredException`         | `key_required`                       | none                                   | empty                  |
 | `400`                 | Key value too long, or outside the allowed charset                                | `IdempotencyKeyInvalidException`          | `key_invalid`                        | none                                   | empty                  |
+| `413`                 | Request body over `idempotency.max-request-body-size`                             | `IdempotencyRequestTooLargeException`     | `request_too_large`                  | none                                   | empty                  |
 | `503`                 | Store unavailable and `onStoreFailure = CLOSED`                                   | `IdempotencyFailClosedException`          | `store_unavailable`                  | none                                   | empty                  |
 
 One response falls outside this table: with the Postgres store, if the
@@ -459,7 +483,16 @@ void onOrderCreated(ConsumerRecord<String, String> record) {
 
 The listener method must accept a `ConsumerRecord<?, ?>` parameter — the
 advice reads the header and body off it for key resolution and
-fingerprinting (enforced at startup).
+fingerprinting (enforced at startup). The record's value must be the raw
+payload, a `String` or `byte[]` (`StringDeserializer`/`ByteArrayDeserializer`);
+deserialize it inside the listener. A value already deserialized to an object
+can't be fingerprinted, so the delivery fails with
+`UnsupportedMessagePayloadException` instead of being silently treated as an
+empty body, which would disable collision detection and dead-letter every
+`fieldPath` delivery. A `null` value (tombstone) is fingerprinted as empty.
+The failure then goes through the container's error handling; since a retry
+can't fix it, consider registering it with
+`DefaultErrorHandler#addNotRetryableExceptions`.
 
 #### Supported `@Idempotent` properties
 
@@ -527,7 +560,11 @@ void onOrderCreated(jakarta.jms.Message message) throws JMSException {
 }
 ```
 
-The listener method must accept a `jakarta.jms.Message` parameter.
+The listener method must accept a `jakarta.jms.Message` parameter. The
+message must be a `TextMessage` or `BytesMessage`. Any other type
+(`ObjectMessage`, `MapMessage`, `StreamMessage`, or a body-less `Message`)
+can't be fingerprinted, and the delivery fails with
+`UnsupportedMessagePayloadException`.
 
 > Unlike the HTTP default header name, JMS property names must be
   Java-identifier-like (JMS message-selector syntax forbids hyphens) — use

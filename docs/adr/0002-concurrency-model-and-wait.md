@@ -101,3 +101,8 @@ We decided:
   (ADR 0003). It carries no `Idempotency-Reject-Reason`: it isn't an idempotency
   decision but a failed effect, and it is written in `afterCompletion`, past the
   point where the exception-handler chain could shape it.
+- **`413` joins the taxonomy (2026-11-20, issue 062).** A request body over
+  `idempotency.max-request-body-size` is rejected while it's being buffered for
+  the fingerprint, as `413` with reason `request_too_large`
+  (`IdempotencyRequestTooLargeException`). It's terminal for that body: retrying
+  the same request can't succeed.
