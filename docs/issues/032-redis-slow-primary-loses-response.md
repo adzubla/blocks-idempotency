@@ -68,3 +68,4 @@ Candidate responses, for triage:
   `response_unavailable` metric row and §7.3 were corrected to say so, and to
   point at the `WARN` log as the only signal. The repro stays `@Disabled` as
   documentation of the limitation.
+- 2026-11-20 — `RedisSlowPrimaryBestEffortTest` is no longer `@Disabled`. It now pins the current behavior (the slow primary's response is dropped, `find()` is empty, and a retry reserves the key afresh), so the limit stays visible in every build.

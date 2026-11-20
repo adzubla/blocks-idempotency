@@ -3,7 +3,7 @@ package io.adzubla.blocks.idempotency.store.redis;
 import com.redis.testcontainers.RedisContainer;
 import io.adzubla.blocks.idempotency.model.CachedResponse;
 import io.adzubla.blocks.idempotency.model.EffectiveKey;
-import org.junit.jupiter.api.Disabled;
+import io.adzubla.blocks.idempotency.model.ReservationResult;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -31,8 +31,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * than sleeping past a real TTL.
  *
  * <p>This is the documented "best-effort vs exactly-once" split, not a contract
- * bug - see the issue. {@code @Disabled}; enabling it fails, demonstrating the
- * dropped response.
+ * bug - see the issue and the README's Redis {@code lock-ttl} section. The test
+ * pins the current behavior (the response is dropped and a retry re-executes) so
+ * the limit stays visible, and so it is not changed or "fixed" by accident.
  */
 @Testcontainers
 class RedisSlowPrimaryBestEffortTest {
@@ -43,8 +44,7 @@ class RedisSlowPrimaryBestEffortTest {
     private static final RedisContainer REDIS = new RedisContainer("redis:7-alpine");
 
     @Test
-    @Disabled("Documents limitation: docs/issues/032-redis-slow-primary-loses-response.md; remove @Disabled to reproduce")
-    void aSlowPrimaryPastItsLockTtlStillHasItsResponseCached() {
+    void aSlowPrimaryPastItsLockTtlHasItsResponseDroppedAndARetryReExecutes() {
         LettuceConnectionFactory connectionFactory = new LettuceConnectionFactory(REDIS.getRedisHost(), REDIS.getRedisPort());
         connectionFactory.afterPropertiesSet();
         StringRedisTemplate redisTemplate = new StringRedisTemplate(connectionFactory);
@@ -59,9 +59,11 @@ class RedisSlowPrimaryBestEffortTest {
         CachedResponse response = new CachedResponse(201, Map.of(), "{\"id\":1}".getBytes());
         store.complete(key, fenceToken, response, Duration.ofHours(24));
 
-        // The primary's effect ran and it completed; its response should be replayable.
-        assertThat(store.find(key)).get()
-                .satisfies(record -> assertThat(record.isCompleted()).isTrue());
+        // The primary's effect ran, but its record had expired: complete() was a no-op,
+        // nothing was cached, and a retry reserves the key afresh (the handler runs again).
+        assertThat(store.find(key)).isEmpty();
+        assertThat(store.reserve(key, "fp", Duration.ofSeconds(30)).outcome())
+                .isEqualTo(ReservationResult.Outcome.RESERVED);
         connectionFactory.destroy();
     }
 }
