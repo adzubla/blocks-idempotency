@@ -166,3 +166,4 @@ slices are **AFK** and `needs-triage`.
 | [065](065-postgres-waiters-pool-exhaustion.md) | Postgres: blocked duplicate requests can exhaust the connection pool | AFK | — |
 | [066](066-postgres-cleanup-unbatched-delete.md) | Postgres cleanup sweep is a single unbatched `DELETE` | AFK | — |
 | [067](067-unauthenticated-shared-key-space-oracle.md) | Unauthenticated routes share one key space (existence oracle for body-field keys) | AFK | — |
+| [068](068-messaging-duplicates-counted-as-response-unavailable.md) | Messaging duplicates are counted as `response_unavailable` (should be a distinct outcome) | AFK | — |

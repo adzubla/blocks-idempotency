@@ -9,10 +9,12 @@ import io.micrometer.core.instrument.MeterRegistry;
  * counter names - the idiomatic Micrometer shape for an enumerable outcome
  * (sum/group by outcome in a dashboard) - plus {@value #TAG_ROUTE}/
  * {@value #TAG_HANDLER} so an outcome can be attributed to a specific
- * endpoint/listener, not just the aggregate. {@code route}/{@code handler}
- * are bounded by the number of distinct {@code @Idempotent} methods in the
- * application, not by request volume, so tagging on them doesn't blow up
- * cardinality the way tagging on the raw key value would.
+ * endpoint/listener, not just the aggregate. {@code handler}
+ * is bounded by the number of {@code @Idempotent} methods, and {@code route}
+ * by the number of distinct destinations or fixed request paths - but {@code
+ * route} is the actual request path for HTTP, so an endpoint with path
+ * variables yields one series per distinct path unless a {@code MeterFilter}
+ * collapses it. Neither grows with the raw key value, which is never tagged.
  *
  * <p>Counters are looked up (not pre-built) on every call: {@code
  * Counter.builder(...).register(registry)} is a get-or-create against the

@@ -18,6 +18,17 @@ It works the same way across four entry-point types — plain HTTP endpoints,
 and Kafka, RabbitMQ, and JMS listeners — backed by a choice of storage engines
 (in-memory, Redis, Postgres).
 
+**Requirements:** Java 17+, Spring Boot 4.x. The HTTP integration targets
+Servlet-based Spring MVC; the messaging integrations target Spring for Apache
+Kafka, Spring AMQP and Spring JMS listeners.
+
+```mermaid
+flowchart LR
+    C["Client / broker<br/>(retries, redelivery)"] --> E["@Idempotent<br/>endpoint or listener"]
+    E <--> S[("Store<br/>Redis or Postgres")]
+    E --> H["Your handler<br/>runs once per key"]
+```
+
 ## 2. Why use this
 
 Retries, double-clicks, and at-least-once message redelivery all cause the
@@ -59,6 +70,10 @@ can be swapped (or mixed) per handler without touching business logic.
 - A duplicate is genuinely harmless (a fire-and-forget notification where
   sending it twice costs nothing) and the extra storage round-trip isn't
   worth paying for.
+
+A few situations the library cannot cover (a reactive stack, asynchronous
+handlers with the Postgres store, a hard exactly-once guarantee for an external
+call) are listed in [9. Limitations](#9-limitations). Read that before adopting it.
 
 ## 3. Getting started
 
@@ -106,52 +121,83 @@ module. Each messaging module likewise auto-configures its advice as soon as
 its listener annotation is on the classpath alongside `core` and a store
 module.
 
-### 3.2. Global configuration
+### 3.2. Quick start
 
-Every attribute on `@Idempotent` has a global default you set once under
-`idempotency.*` and override per endpoint/listener only where needed:
+A minimal HTTP setup with Redis. Add `core`, `web` and `store-redis` as shown
+above, then:
 
 ```properties
-# store qualifier used when @Idempotent leaves store=""; no default — required
-# unless every @Idempotent sets store= explicitly
+spring.data.redis.host=localhost
 idempotency.default-store=redis
-# response TTL used when @Idempotent leaves ttl=""
-idempotency.default-ttl=24h
-# posture when the store is unavailable: OPEN lets the request through, CLOSED returns 503
-idempotency.default-on-store-failure=OPEN
-# behavior for a concurrent in-progress key: REJECT returns 409, WAIT blocks for the primary's result
-idempotency.default-when-in-progress=REJECT
-# how long a reservation is held before an abandoned one is treated as gone
-idempotency.lock-ttl=30s
-# how long a WAIT caller blocks for the primary's result before giving up
-idempotency.wait-timeout=5s
-# base delay between WAIT-mode polls, for stores without a native blocking wait
-idempotency.poll-interval=100ms
-# extra random delay added to each poll, up to this much
-idempotency.poll-jitter=50ms
-# responses over this size aren't cached; a replay then gets 409 response_unavailable
-idempotency.max-body-size=1MB
-# request bodies the library buffers (fingerprint, body-field key) over this size get
-# 413 request_too_large, rejected while buffering rather than read in full
-idempotency.max-request-body-size=1MB
-# max length of the raw key value; longer values, or values outside the fixed
-# charset [A-Za-z0-9_.:-]+, are rejected with 400
-idempotency.key.max-length=255
-# fold the authenticated principal into the key scope (HTTP only)
-idempotency.scope.principal-enabled=true
-# opaque value passed to the active PrincipalClaimResolver bean
-idempotency.scope.principal-claim=sub
-# header used to flag a replayed HTTP response
-idempotency.replay.header-name=Idempotency-Replayed
-# headers stripped from a replay; Set-Cookie is always stripped regardless of this list
-idempotency.replay.header-denylist=Date,Set-Cookie,traceparent,tracestate
-# emit counters for replay/collision/concurrency/fail-open/fail-closed/response-unavailable outcomes (needs a MeterRegistry)
-idempotency.metrics.enabled=true
 ```
 
-A misconfigured `@Idempotent` — both or neither of `header`/`fieldPath` set,
-an invalid `ttl`, or a `store` qualifier with no matching bean — fails
-**application startup**, not the first request.
+```java
+@RestController
+class OrderController {
+
+    @PostMapping("/orders")
+    @Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER)   // X-Idempotency-Key
+    ResponseEntity<Order> create(@RequestBody OrderRequest request) {
+        return ResponseEntity.status(201).body(orders.create(request));
+    }
+}
+```
+
+The client generates one key per logical operation and resends the same key on
+every retry:
+
+```bash
+# First call: the handler runs.
+curl -i -X POST localhost:8080/orders -H 'X-Idempotency-Key: 01J9Z3K8Q2' \
+     -H 'Content-Type: application/json' -d '{"sku":"A1","qty":2}'
+# HTTP/1.1 201
+
+# Retry with the same key and body: the original response, handler not run.
+curl -i -X POST localhost:8080/orders -H 'X-Idempotency-Key: 01J9Z3K8Q2' \
+     -H 'Content-Type: application/json' -d '{"sku":"A1","qty":2}'
+# HTTP/1.1 201
+# Idempotency-Replayed: true
+
+# Same key, different body: rejected, handler not run.
+curl -i -X POST localhost:8080/orders -H 'X-Idempotency-Key: 01J9Z3K8Q2' \
+     -H 'Content-Type: application/json' -d '{"sku":"B7","qty":1}'
+# HTTP/1.1 422
+# Idempotency-Reject-Reason: collision
+```
+
+The listener variants look the same, with the listener annotation in place of
+the mapping annotation (see [5. Idempotent entrypoints](#5-idempotent-entrypoints)).
+
+### 3.3. The `@Idempotent` annotation
+
+`@Idempotent` goes on a controller method or a listener method (method level
+only, not on a class):
+
+```java
+@Idempotent(
+    header = Idempotent.IDEMPOTENCY_KEY_HEADER,   // "X-Idempotency-Key"; or fieldPath = "$.order.id"
+    store = RedisIdempotencyStore.QUALIFIER,      // "" inherits idempotency.default-store
+    ttl = "PT1H",                                 // "" inherits idempotency.default-ttl
+    keyRequired = true,                           // fixed default, no global
+    onStoreFailure = Idempotent.OnStoreFailure.CLOSED,
+    whenInProgress = Idempotent.WhenInProgress.REJECT
+)
+```
+
+| Property               | Meaning                                                                                                                                                         |
+|------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `header` / `fieldPath` | Where the idempotency key comes from: a header (or message header/property), or a JSONPath into the body. Exactly one is required ([4.1](#41-idempotency-key-vs-effective-key)). |
+| `store`                | Which store holds the records (`"redis"`, `"postgres"`, see [6](#6-storage)). `""` inherits `idempotency.default-store`.                                        |
+| `ttl`                  | How long a completed response is kept, such as `PT1H` or `1h`. After that the key behaves as a new one. `""` inherits `idempotency.default-ttl`.               |
+| `keyRequired`          | Default `true`: a request or delivery without a key is rejected. `false` lets it through unprotected, with nothing stored. It has no global default.            |
+| `onStoreFailure`       | What to do when the store is unreachable. `OPEN` runs the handler unprotected, `CLOSED` rejects (`503` for HTTP, redelivery for messaging). `DEFAULT` inherits the global setting. |
+| `whenInProgress`       | What to do with a duplicate that arrives while the first request is still running. `REJECT` fails it (`409` for HTTP, redelivery for messaging). `WAIT` blocks until the first request finishes (HTTP only). `DEFAULT` inherits the global setting. |
+
+Every attribute with a global default can be set once under `idempotency.*`
+([7. Configuration reference](#7-configuration-reference)) and overridden per
+handler. A misconfigured `@Idempotent` (both or neither of `header`/`fieldPath`,
+an invalid `ttl`, or a `store` with no matching bean) fails **application
+startup**, not the first request.
 
 ## 4. How it works
 
@@ -172,7 +218,29 @@ applied to, the same sequence happens underneath:
    caches the result (HTTP) or simply marks the delivery done (messaging);
    failure releases the key so a genuine retry can proceed.
 
-This flow lives in one transport-neutral core module; each transport (HTTP,
+**Terms used from here on.** The first request or delivery to present a key is
+the *primary*: it *reserves* the key, and the key is *in progress* while the
+handler runs. A reservation is held for at most `lock-ttl`, so a primary that
+crashes cannot block its key forever. Any later request or delivery with the
+same key is a *duplicate*. A key moves through these states:
+
+```mermaid
+stateDiagram-v2
+    [*] --> InProgress: reserve (first request)
+    InProgress --> Completed: handler succeeded (2xx / normal return)
+    InProgress --> [*]: handler failed (released), or lock-ttl expired
+    Completed --> [*]: ttl expired
+    note right of InProgress
+        a duplicate here is rejected (409 / redelivery)
+        or waits (HTTP, whenInProgress = WAIT)
+    end note
+    note right of Completed
+        a duplicate here is replayed (HTTP)
+        or acked and skipped (messaging)
+    end note
+```
+
+The five steps above live in one transport-neutral core module; each transport (HTTP,
 Kafka, RabbitMQ, JMS) has a thin adapter that plugs its own request/delivery
 shape into the same underlying engine and store. That's why the behavior,
 configuration shape, and terminology are consistent everywhere you use
@@ -219,8 +287,8 @@ endpoints, listeners, or callers never collides:
   raw key value.
 - **Messaging**: destination (topic/queue) + listener id + raw key value.
   There's no principal equivalent in messaging. The listener id is the
-  listener annotation's own `id()` if set, otherwise the method's
-  fully-qualified name.
+  listener annotation's own `id()` if set, otherwise
+  `<fully.qualified.ClassName>#<methodName>`.
 
 The principal fold-in for HTTP is itself configurable:
 `idempotency.scope.principal-enabled` (default `true`) turns it on or off
@@ -296,15 +364,8 @@ applies everywhere with `idempotency.scope.principal-enabled=false`. Use the
 body-field strategy on authenticated routes, or point it at an identifier that
 isn't guessable, such as a UUID or ULID rather than a sequential order number.
 
-**Either way, keep the key scoped to one intent, not shared across
-unrelated ones.** Don't reuse the same key for two operations that happen
-to occur close together just because it's convenient — the effective key
-already isolates by endpoint/listener (and principal, for HTTP), so you
-don't need to manually namespace a key yourself to avoid cross-endpoint
-collisions; you only need to keep it unique **within** one endpoint/listener
-per logical operation.
-
 A practical checklist:
+- You don't need to namespace a key by endpoint, listener or user: the effective key already isolates those. Keep it unique only within one endpoint/listener, per logical operation.
 - Same value on every retry of the same operation — never regenerated per attempt.
 - Different value for every distinct operation, even ones that look similar (e.g. two separate orders from the same user in the same second).
 - Opaque and short enough to be cheap to store and log — a UUID/ULID or an existing business id, not a serialized object.
@@ -312,41 +373,21 @@ A practical checklist:
 
 ### 4.3. Request/delivery flow
 
-One reservation/store decision flow is shared by every transport — only the
-adapter at the edges differs (an HTTP interceptor, or a broker-specific
-advice for Kafka/RabbitMQ/JMS). The core idea, stripped of every status code
-and edge case:
+One decision flow is shared by every transport; only the adapter at the edges
+differs (an HTTP interceptor, or a broker-specific advice for
+Kafka/RabbitMQ/JMS). What happens to each kind of arrival:
 
-```mermaid
-sequenceDiagram
-    actor Caller as Client / Broker
-    participant Adapter as Idempotency adapter
-    participant Store as IdempotencyStore
-    participant Handler as Handler / Listener
+| Arrives | HTTP | Messaging |
+|---------|------|-----------|
+| First request with this key | The handler runs and a `2xx` response is cached. A non-`2xx` response or an exception releases the key. | The listener runs and the delivery is marked done. An exception releases the key. |
+| Duplicate after the first finished, same payload | The cached response is replayed (`Idempotency-Replayed: true`). | Acked and skipped; the listener doesn't run. |
+| Duplicate while the first is still running | `409` with `Retry-After`, or it waits for the result with `whenInProgress = WAIT`. | Failed and redelivered later; the listener doesn't run. |
+| Same key, different payload | `422` | Dead-lettered. |
+| Missing or invalid key | `400` | Dead-lettered. |
+| Store unreachable | Runs unprotected (`onStoreFailure = OPEN`) or `503` (`CLOSED`). | Runs unprotected, or left un-acked for redelivery. |
 
-    Caller->>Adapter: request / delivery + key
-    Adapter->>Store: reserve(key)
-
-    alt fresh key
-        Store-->>Adapter: reserved
-        Adapter->>Handler: invoke
-        Handler-->>Adapter: result
-        Adapter->>Store: complete or release
-        Adapter-->>Caller: original response
-    else duplicate, same payload
-        Store-->>Adapter: already seen
-        Adapter-->>Caller: replay cached response / skip (no re-invoke)
-    else duplicate, different payload
-        Store-->>Adapter: fingerprint mismatch
-        Adapter-->>Caller: reject as collision
-    else still in progress
-        Store-->>Adapter: not yet complete
-        Adapter-->>Caller: reject (or wait, HTTP only)
-    end
-```
-
-A complete sequence diagram with the full decision tree — every status code, header, and store-failure branch —
-is in `IMPLEMENTATION.md`.
+The HTTP status codes and headers are listed in [5.1](#51-web), and the broker
+behavior in [5.2](#52-kafka) to [5.5](#55-shared-messaging-behavior).
 
 ## 5. Idempotent entrypoints
 
@@ -363,21 +404,10 @@ A repeat request with the same effective key returns the original response
 (status, headers, body) instead of re-executing the handler, flagged with
 `Idempotency-Replayed: true`.
 
-#### Supported `@Idempotent` properties
-
-| Property               | Notes                                                                             |
-|------------------------|-----------------------------------------------------------------------------------|
-| `header` / `fieldPath` | Exactly one required.                                                             |
-| `store`                | Which store bean to use; `""` inherits `idempotency.default-store`.               |
-| `ttl`                  | Response cache TTL; `""` inherits `idempotency.default-ttl`.                      |
-| `keyRequired`          | Default `true`; fixed default, does not inherit a global.                         |
-| `onStoreFailure`       | `OPEN`/`CLOSED`/`DEFAULT` (inherits global posture).                              |
-| `whenInProgress`       | `REJECT`/`WAIT`/`DEFAULT` (inherits global posture). Both are supported for HTTP. |
-
-Web-specific global configuration is `idempotency.scope.principal-enabled` /
-`idempotency.scope.principal-claim` (see
-[Idempotency Key vs Effective Key](#41-idempotency-key-vs-effective-key)) and
-`idempotency.replay.*` (which headers get reproduced on a replay).
+The properties are described in [3.3](#33-the-idempotent-annotation). The
+settings specific to HTTP (`idempotency.scope.*`, `idempotency.replay.*`,
+`idempotency.max-request-body-size`) are in
+[7. Configuration reference](#7-configuration-reference).
 
 #### Behavior
 
@@ -498,12 +528,6 @@ The failure then goes through the container's error handling; since a retry
 can't fix it, consider registering it with
 `DefaultErrorHandler#addNotRetryableExceptions`.
 
-#### Supported `@Idempotent` properties
-
-Same set as [Web](#51-web) except:
-- `whenInProgress = WAIT` is rejected at startup — only `REJECT` is
-  supported (see [Shared messaging behavior](#55-shared-messaging-behavior)).
-
 #### Kafka-specific configuration
 
 ```properties
@@ -515,10 +539,9 @@ idempotency.kafka.dead-letter-suffix=.DLT
 
 A collision or invalid/missing key republishes the message to
 `<topic><dead-letter-suffix>` (default `.DLT`) via an optionally-injected
-`KafkaTemplate`, then acks/skips the original. An ordinary duplicate
-delivery is acked and skipped without re-invoking the listener — there's no
-response to replay for a message listener. See
-[Shared messaging behavior](#55-shared-messaging-behavior) below for the rest.
+`KafkaTemplate`, then acks/skips the original. Duplicates, in-progress
+deliveries and `WAIT` are covered in
+[Shared messaging behavior](#55-shared-messaging-behavior).
 
 ### 5.3. RabbitMQ
 
@@ -532,12 +555,6 @@ void onOrderCreated(org.springframework.amqp.core.Message message) {
 
 The listener method must accept a Spring AMQP `Message` parameter.
 
-#### Supported `@Idempotent` properties
-
-Same set as [Web](#51-web) except:
-- `whenInProgress = WAIT` is rejected at startup — only `REJECT` is
-  supported.
-
 #### Configuration
 
 There is no RabbitMQ-specific `idempotency.*` property — unlike Kafka/JMS,
@@ -545,14 +562,13 @@ dead-lettering here is broker-native rather than library-managed.
 
 #### Behavior
 
-A collision, invalid key, or fail-closed store outage all throw
+A collision, missing or invalid key, or fail-closed store outage all throw
 `AmqpRejectAndDontRequeueException`; the broker then routes the rejected
 message per whatever dead-letter exchange/queue you've configured on the
 queue itself — this module doesn't own that configuration, so make sure your
 queue has a dead-letter policy set up if you want rejected messages captured
-rather than dropped. An ordinary duplicate delivery is acked and skipped
-without re-invoking the listener. See
-[Shared messaging behavior](#55-shared-messaging-behavior) below.
+rather than dropped. Duplicates, in-progress deliveries and `WAIT` are covered in
+[Shared messaging behavior](#55-shared-messaging-behavior).
 
 ### 5.4. JMS
 
@@ -574,12 +590,6 @@ can't be fingerprinted, and the delivery fails with
   Java-identifier-like (JMS message-selector syntax forbids hyphens) — use
   something like `IdempotencyKey` rather than `X-Idempotency-Key`.
 
-#### Supported `@Idempotent` properties
-
-Same set as [Web](#51-web) except:
-- `whenInProgress = WAIT` is rejected at startup — only `REJECT` is
-  supported.
-
 #### JMS-specific configuration
 
 ```properties
@@ -591,9 +601,9 @@ idempotency.jms.dead-letter-suffix=.DLQ
 
 A collision or invalid/missing key republishes the message to
 `<destination><dead-letter-suffix>` (default `.DLQ`) via an
-optionally-injected `JmsTemplate`, then acks/skips the original. An ordinary
-duplicate delivery is acked and skipped without re-invoking the listener.
-See [Shared messaging behavior](#55-shared-messaging-behavior) below.
+optionally-injected `JmsTemplate`, then acks/skips the original. Duplicates, in-progress
+deliveries and `WAIT` are covered in
+[Shared messaging behavior](#55-shared-messaging-behavior).
 
 #### Broker portability
 
@@ -609,11 +619,12 @@ IBM MQ, typically `ibm-mq-spring-boot-starter` plus an `MQConnectionFactory`).
 
 ### 5.5. Shared messaging behavior
 
-All three broker integrations share these differences from the HTTP
-behavior described in the [Web](#51-web) section:
+All three broker integrations accept the same `@Idempotent` properties as
+HTTP ([3.3](#33-the-idempotent-annotation)) and share these differences from the
+HTTP behavior described in the [Web](#51-web) section:
 
-- **No response replay.** A duplicate delivery is acked and skipped, not
-  replayed — there's no captured response to hand back to a message
+- **No response replay.** An ordinary duplicate delivery is acked and skipped
+  without re-invoking the listener, not replayed — there's no captured response to hand back to a message
   listener the way there is to an HTTP client. This is dedupe-only
   protection.
 - **`whenInProgress = WAIT` is rejected at startup.** Blocking a listener
@@ -665,10 +676,10 @@ behavior described in the [Web](#51-web) section:
 
 |                  | In-memory                    | Redis                                         | Postgres                                                    |
 |------------------|------------------------------|-----------------------------------------------|-------------------------------------------------------------|
-| Qualifier        | *(register yourself)*        | `"redis"` (`RedisIdempotencyStore.QUALIFIER`) | `"postgres"` (`PostgresIdempotencyStore.QUALIFIER`)         |
+| Qualifier        | `"in-memory"` (`InMemoryIdempotencyStore.QUALIFIER`; register the bean yourself) | `"redis"` (`RedisIdempotencyStore.QUALIFIER`) | `"postgres"` (`PostgresIdempotencyStore.QUALIFIER`)         |
 | Guarantee        | Best-effort, single instance | Best-effort                                   | Exactly-once, for effects that write to the same database   |
 | TTL mechanism    | In-process, `Clock`-driven   | Native Redis key TTL                          | `expires_at` column + a scheduled sweep                     |
-| Concurrency      | In-process lock              | Polling (~100ms + jitter)                     | Native row lock, blocks until the holder commits/rolls back |
+| Concurrency      | Polling (~100ms + jitter)    | Polling (~100ms + jitter)                     | Native row lock, blocks until the holder commits/rolls back |
 | Production-ready | No — tests/prototypes only   | Yes                                           | Yes                                                         |
 
 Store choice is per endpoint/listener, not per application: register more
@@ -716,7 +727,7 @@ or a single-instance prototype.
 
 ### 6.3 Redis
 
-Qualifier `"redis"` (`RedisIdempotencyStore.QUALIFIER`).Best-effort: fast, but a Redis blip or eviction can lose
+Qualifier `"redis"` (`RedisIdempotencyStore.QUALIFIER`). Best-effort: fast, but a Redis blip or eviction can lose
 a reservation. Requires `spring-boot-starter-data-redis` and a configured
 `StringRedisTemplate` (standard `spring.data.redis.*` properties). Lifecycle
 rides Redis's own key TTL: reserve holds for `lock-ttl` (~30s by default),
@@ -839,30 +850,82 @@ so it still works; values that fit are stored verbatim.
 
 ### 6.5 Choosing a store
 
-As a rule of thumb: reach for **Redis** when the side effect you're
-protecting lives outside your own database (an API call, an email, a
-message to another system) and speed matters more than a hard guarantee.
-Reach for **Postgres** when the side effect is itself a write to the same
-database the idempotency record lives in, and you want the two to succeed or
-fail together atomically. Nothing stops you from registering both and
-picking per-endpoint.
+| Your situation | Use |
+|----------------|-----|
+| The effect is a write to your own Postgres database, and the handler is synchronous | **Postgres**: the effect and the idempotency record commit together, so it is exactly-once. |
+| The effect is outside your database (a payment gateway, an email, another service) | **Redis**: fast, but best-effort. Pass the key downstream too if you need more. |
+| The effect writes to Postgres, but the handler is asynchronous (`CompletableFuture`, `DeferredResult`, streaming) | **Redis**: the Postgres store doesn't support asynchronous handlers. |
+| Tests, or a single-instance prototype | **In-memory**: not for production. |
 
-## 7. Observability
+Both stores can be registered side by side and chosen per endpoint ([6.1](#61-overview)).
 
-### 7.1 Configuring metrics
+## 7. Configuration reference
+
+Every setting has a default except `idempotency.default-store`, so a working
+setup needs only that one. Durations take Spring Boot formats (`30s`, `5m`,
+`PT30S`) and sizes take `1MB`-style values.
+
+### 7.1. Global settings
+
+The first four are the global defaults for the `@Idempotent` attributes of the
+same name ([3.3](#33-the-idempotent-annotation)); an explicit attribute on the
+annotation always wins.
+
+| Property | Default | Applies to | Meaning |
+|----------|---------|------------|---------|
+| `idempotency.default-store` | none, **required** unless every `@Idempotent` sets `store` | all | Store qualifier (`redis`, `postgres`). Startup fails if it is empty and an `@Idempotent` doesn't set its own. |
+| `idempotency.default-ttl` | `24h` | all | How long a completed response is kept. |
+| `idempotency.default-on-store-failure` | `OPEN` | all | `OPEN` or `CLOSED`. `DEFAULT` is not allowed here. |
+| `idempotency.default-when-in-progress` | `REJECT` | all | `REJECT` or `WAIT`. `DEFAULT` is not allowed here, and `WAIT` fails startup for messaging listeners. |
+| `idempotency.lock-ttl` | `30s` | all | How long a reservation is held before an abandoned one is treated as gone. Set it above your slowest handler ([6.3](#63-redis)). |
+| `idempotency.wait-timeout` | `5s` | HTTP | How long a `WAIT` duplicate blocks for the first request's result before getting `409 timeout`. |
+| `idempotency.poll-interval` | `100ms` | HTTP | Delay between `WAIT` polls, for stores without a native blocking wait. Postgres ignores it. |
+| `idempotency.poll-jitter` | `50ms` | HTTP | Random extra delay added to each poll, up to this much. Postgres ignores it. |
+| `idempotency.max-body-size` | `1MB` | HTTP | A response over this size is not cached, so a duplicate gets `409 response_unavailable`. |
+| `idempotency.max-request-body-size` | `1MB` | HTTP | A request body over this size is rejected with `413 request_too_large` while buffering. |
+| `idempotency.key.max-length` | `255` | all | Longest accepted raw key. A longer key, or one outside the fixed charset `[A-Za-z0-9_.:-]`, is rejected (`400 key_invalid` / dead-lettered). |
+| `idempotency.scope.principal-enabled` | `true` | HTTP | Include the authenticated principal in the effective key. |
+| `idempotency.scope.principal-claim` | `sub` | HTTP | Passed unchanged to the `PrincipalClaimResolver` bean. The default resolver ignores it and uses `Principal#getName()`. |
+| `idempotency.replay.header-name` | `Idempotency-Replayed` | HTTP | Header that flags a replayed response. |
+| `idempotency.replay.header-denylist` | `Date,Set-Cookie,traceparent,tracestate` | HTTP | Headers not reproduced on a replay. `Set-Cookie` is never replayed, even if you remove it from this list. |
+| `idempotency.metrics.enabled` | `true` | all | Record the `idempotency.outcomes` counter ([8](#8-observability)). Needs a `MeterRegistry` bean. |
+
+### 7.2. Store and transport settings
+
+| Property | Default | Meaning |
+|----------|---------|---------|
+| `idempotency.redis.key-prefix` | `idempotency:` | Prefix of the hashed record key. Namespaces several applications sharing one Redis ([6.3](#63-redis)). |
+| `idempotency.postgres.lock-timeout` | `2s` | How long a duplicate blocks on the reservation row's lock before giving up ([6.4](#64-postgres)). |
+| `idempotency.postgres.cleanup.enabled` | `true` | Run the scheduled sweep of expired rows. Disable it to sweep with your own job. |
+| `idempotency.postgres.cleanup.interval` | `5m` | Delay between sweeps. |
+| `idempotency.postgres.cleanup.batch-size` | `1000` | Rows deleted per statement. A sweep repeats until a batch comes back short. |
+| `idempotency.kafka.dead-letter-suffix` | `.DLT` | Appended to the source topic to form the dead-letter topic ([5.2](#52-kafka)). |
+| `idempotency.jms.dead-letter-suffix` | `.DLQ` | Appended to the source destination to form the dead-letter destination ([5.4](#54-jms)). |
+
+RabbitMQ has no setting of its own: dead-lettering is configured on the queue
+in the broker ([5.3](#53-rabbitmq)).
+
+Example, for an HTTP service that uses Postgres and a longer reservation:
+
+```properties
+idempotency.default-store=postgres
+idempotency.lock-ttl=60s
+idempotency.postgres.lock-timeout=1s
+```
+
+## 8. Observability
+
+### 8.1 Configuring metrics
 
 Metrics are emitted through Micrometer, so they show up wherever your
 application already ships meters (Prometheus, CloudWatch, Datadog, ...) with
 no extra wiring beyond having a `MeterRegistry` bean, which Spring Boot
 Actuator provides automatically.
 
-```properties
-# emit counters for replay/collision/concurrency/fail-open/fail-closed/response-unavailable outcomes (needs a MeterRegistry)
-idempotency.metrics.enabled=true
-```
-
-Recording falls back to a no-op implementation — same code path, zero
-overhead, nothing throws — whenever either condition isn't met:
+Metrics are on by default (`idempotency.metrics.enabled=true`, see
+[7](#7-configuration-reference)). Recording falls back to a no-op
+implementation — same code path, zero overhead, nothing throws — whenever
+either condition isn't met:
 - `idempotency.metrics.enabled=false` (default `true`), or
 - no `MeterRegistry` bean is on the context (e.g. Actuator isn't on the
   classpath).
@@ -880,37 +943,187 @@ Emission is centralized in the transport-neutral engine, not duplicated per
 adapter: every outcome below fires from exactly one call site regardless of
 whether the request came in over HTTP, Kafka, RabbitMQ, or JMS.
 
-### 7.2 The `idempotency.outcomes` counter
+### 8.2 The `idempotency.outcomes` counter
 
 One counter, `idempotency.outcomes`, dimensioned by an `outcome` tag rather
 than six separate counter names — sum or group by `outcome` in your
 dashboard/alerting rule of choice. It's also tagged with `route` and
-`handler` (the same identity that appears in the logs — request path/HTTP
-method for web, destination/listener id for messaging), so you can attribute
-an outcome to a specific `@Idempotent` method instead of only seeing an
-application-wide total; group by `route`+`handler` to find *which* endpoint
-is producing a rising `collision` or `response_unavailable` rate. The raw key
-value itself is never a tag — that's unbounded, and would blow up cardinality
-the way route/handler (bounded by the number of `@Idempotent` methods) don't.
+`handler` (the same identity that appears in the logs — request path and
+HTTP method for web, destination and listener id for messaging), so you can
+attribute an outcome to a specific endpoint or listener instead of only seeing
+an application-wide total. The raw key value itself is never a tag, since it is
+unbounded.
+
+**Watch the `route` tag on HTTP endpoints with path variables.** `route` is the
+actual request path, so `@PostMapping("/orders/{id}")` produces one series per
+distinct id (`/orders/42`, `/orders/43`, ...). Endpoints with fixed paths, and
+messaging destinations, are bounded. If you have path variables, collapse them
+with a Micrometer `MeterFilter`:
+
+```java
+@Bean
+MeterFilter idempotencyRouteCardinality() {
+    return MeterFilter.replaceTagValues("route",
+            route -> route.replaceAll("/\\d+", "/{id}"));   // adapt to your paths
+}
+```
+
+(A `MeterFilter` applies to every meter with a `route` tag. To limit it to
+this counter, check `id.getName()` in a custom `MeterFilter` instead.)
 
 | `outcome` tag          | Fires when                                                                               | Normal or abnormal?                                               | Operator response                                                                                                                                                                                                                                                                                                                                                                     |
 |------------------------|------------------------------------------------------------------------------------------|-------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `replay`               | A completed record's cached response is replayed instead of re-executing the handler.    | **Normal.** This is the mechanism working as intended.            | None. A sustained *high* rate just means clients/brokers are retrying a lot — worth knowing about network conditions upstream, but not an idempotency problem.                                                                                                                                                                                                                        |
+| `replay`               | HTTP only. A completed record's cached response is replayed instead of re-executing the handler. Never fires for messaging. | **Normal.** This is the mechanism working as intended.            | None. A sustained *high* rate just means clients/brokers are retrying a lot — worth knowing about network conditions upstream, but not an idempotency problem.                                                                                                                                                                                                                        |
 | `collision`            | The same key showed up with a *different* payload (fingerprint mismatch, `422`).         | **Abnormal.** Always a bug or misuse, never routine.              | Investigate the caller: a client reusing idempotency keys across distinct requests, or a body-field key (`fieldPath`) pointing at a value that isn't actually unique per intent. Not a store or infra problem.                                                                                                                                                                        |
-| `concurrency`          | A concurrent in-progress duplicate was rejected (`409`) or a `WAIT` caller timed out.    | **Expected at some baseline** under legitimate racing retries.    | Watch the *rate*, not raw occurrences. A rising trend suggests handlers are running slower than clients expect (tune `wait-timeout`), or a caller is retrying too aggressively before the first attempt could finish.                                                                                                                                                                 |
+| `concurrency`          | A duplicate found the key in progress and was rejected (`409` for HTTP, redelivery for messaging), or a `WAIT` caller timed out or found the key released. | **Expected at some baseline** under legitimate racing retries.    | Watch the *rate*, not raw occurrences. A rising trend suggests handlers are running slower than clients expect (tune `wait-timeout`), or a caller is retrying too aggressively before the first attempt could finish.                                                                                                                                                                 |
 | `fail_open`            | The store was unavailable and `onStoreFailure=OPEN` let the request through unprotected. | **Abnormal — store health incident.**                             | Page/alert. During this window, duplicate side effects are *not* being prevented. Check store connectivity/latency/capacity immediately; this is the metric that tells you protection is currently off.                                                                                                                                                                               |
 | `fail_closed`          | The store was unavailable and `onStoreFailure=CLOSED` rejected the request (`503`).      | **Abnormal — store health incident, with visible client impact.** | Page/alert, same root cause as `fail_open` (store outage) but here clients are seeing failures directly. Check store connectivity/latency/capacity; consider whether `OPEN` is more appropriate for this endpoint's risk profile.                                                                                                                                                     |
-| `response_unavailable` | A completed record exists but its response can't be replayed (`409`, no `Retry-After`).  | **Abnormal if sustained.**                                        | The original response exceeded `idempotency.max-body-size` (raise the limit if these are legitimate responses). Retrying the same key can never succeed once this fires, so this is a signal to fix configuration, not to expect self-healing. |
+| `response_unavailable` | A duplicate found a completed record that has no replayable response. For HTTP that is a `409` with no `Retry-After`. For messaging it is every routine duplicate delivery that is acked and skipped. | **HTTP: abnormal if sustained. Messaging: normal.** It is the messaging equivalent of `replay`. | **HTTP:** the original response exceeded `idempotency.max-body-size` (raise the limit if these are legitimate responses). Retrying the same key can never succeed once this fires, so fix the configuration rather than expect self-healing. **Messaging:** nothing to do. It counts the duplicates your listeners skipped, so a high rate just means heavy redelivery. |
 
-### 7.3 Logs
+### 8.3 Logs
 
 Every decision also logs at `DEBUG` (reservation, replay, collision, reject,
 completion, release — each tagged with route/handler/key) for request-level
 tracing, and store-unavailable events log at `WARN` regardless of whether the
-resolved posture was fail-open or fail-closed. The Redis store additionally
+resolved posture was fail-open or fail-closed. The raw key value appears in
+these lines. A store failure while completing or releasing a key is logged at
+`WARN` too, but has no metric: the response simply isn't cached. The Redis store additionally
 logs a `WARN` when `complete()` silently no-ops because the reservation was
 already gone or superseded (`... completion no-op for ... - reservation gone
 or superseded ...`) — the only signal of the `lock-ttl`-too-short scenario
 described in [6.3 Redis](#63-redis). No outcome metric records it: the
 dropped record means the next attempt is an ordinary fresh reservation, so
 alert on this log line rather than on a metric.
+
+The Postgres store also logs a `WARN` when a commit fails and the effect is
+rolled back, and when it rolls back a reservation left unresolved on a thread
+([6.4](#64-postgres)). A failed expiry sweep is logged at `ERROR`.
+
+## 9. Limitations
+
+Where the library does not apply, or its guarantee is weaker than you might
+assume:
+
+| Situation | What happens | What to do instead |
+|-----------|--------------|--------------------|
+| **Reactive stack (WebFlux)** | The HTTP integration is a Servlet filter and Spring MVC interceptor; it does not apply. | Use the messaging modules or build on `core` directly. |
+| **Postgres store with an async handler** (`CompletableFuture`, `DeferredResult`, `Callable`, streaming, reactive return types) | **Application startup fails.** The reservation is the reserving thread's open transaction, which an async handler would leave behind. | Make the handler synchronous, or use Redis for that endpoint. |
+| **Side effect outside your database, needing a hard guarantee** (payment gateway, email) | Redis is best-effort. A Redis outage or eviction, or a handler that outlasts `lock-ttl`, lets a retry run the effect again. | Pass your own idempotency key to the downstream system as well. No store can make an external call exactly-once. |
+| **Exactly-once on Postgres, but the effect writes elsewhere** | The guarantee only covers writes made in the same database and transaction as the idempotency record. | Use Redis (best-effort) and accept the limit. |
+| **Fail-open posture** (`onStoreFailure=OPEN`, the default) | While the store is down, requests run unprotected, so duplicates are not prevented. | Set `CLOSED` on endpoints where a duplicate is worse than a `503`. |
+| **Large or streaming HTTP responses** | A response over `idempotency.max-body-size` (1MB) is not cached, so a duplicate gets `409 response_unavailable` instead of a replay. A streaming response is buffered in full before it is sent. | Raise the limit, or don't mark such endpoints `@Idempotent`. |
+| **Request bodies over `idempotency.max-request-body-size`** (1MB) | Rejected with `413 request_too_large`. | Raise the limit, or use a header key on a smaller request. |
+| **Messaging: you want the original result replayed** | Messaging is dedupe-only. A duplicate is acked and skipped; nothing is cached or replayed. | Make the listener's effect observable elsewhere (a row, an event). |
+| **Messaging: `whenInProgress = WAIT`** | Rejected at startup. Only `REJECT` is supported. | Give in-progress deliveries a retry/backoff budget (see [5.5](#55-shared-messaging-behavior)). |
+| **Messaging: payloads already deserialized to objects** | The delivery fails with `UnsupportedMessagePayloadException`. Kafka needs a `String`/`byte[]` value, JMS a `TextMessage`/`BytesMessage`. | Use raw deserializers and deserialize inside the listener. |
+| **Multipart or form requests** | A multipart body is not part of the fingerprint, so a different upload under the same key replays as a duplicate. `fieldPath` doesn't apply to a form body. | Use a header key. |
+| **Class-level annotation** | `@Idempotent` is method-level only. | Annotate each handler method. |
+| **A key that must live longer than its TTL** | An expired key behaves as a brand-new one, and the operation runs again (default TTL 24h). | Raise `ttl` for that endpoint. |
+| **Using it as a distributed lock or ordering mechanism** | It deduplicates one key's operation. It doesn't serialize different keys or order operations. | Use a lock or a queue designed for that. |
+
+## 10. Recipes
+
+### 10.1. Charge a card (external effect, Redis, fail-closed)
+
+A duplicate charge is worse than a brief outage, so reject rather than run
+unprotected when Redis is down. Give the handler a generous `lock-ttl`
+(configured globally) and pass the key on to the gateway as well.
+
+```java
+@PostMapping("/payments")
+@Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER,
+        store = RedisIdempotencyStore.QUALIFIER,
+        onStoreFailure = Idempotent.OnStoreFailure.CLOSED)
+ResponseEntity<Receipt> pay(@RequestBody PaymentRequest request,
+                            @RequestHeader("X-Idempotency-Key") String key) {
+    return ResponseEntity.ok(gateway.charge(request, key));   // forward the key downstream
+}
+```
+
+### 10.2. Create an order (database effect, Postgres, wait for the first request)
+
+The order row and the idempotency record commit together, so a retry can
+never see one without the other. `WAIT` makes a concurrent duplicate block until
+the first request finishes, then return its response.
+
+```java
+@Transactional
+@PostMapping("/orders")
+@Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER,
+        store = PostgresIdempotencyStore.QUALIFIER,
+        whenInProgress = Idempotent.WhenInProgress.WAIT)
+ResponseEntity<Order> create(@RequestBody OrderRequest request) {
+    return ResponseEntity.status(201).body(orders.save(request));
+}
+```
+
+Keep the handler synchronous, and size the connection pool for blocked
+duplicates ([6.4](#64-postgres)).
+
+### 10.3. A webhook you don't control (body-field key)
+
+The sender includes its own event id. Use it as the key instead of asking for a
+header, and keep the route authenticated so the key isn't shared by anonymous
+callers ([4.2](#42-choosing-an-idempotency-key)).
+
+```java
+@PostMapping("/webhooks/payments")
+@Idempotent(fieldPath = "$.event.id", store = RedisIdempotencyStore.QUALIFIER)
+ResponseEntity<Void> onEvent(@RequestBody PaymentEvent event) {
+    handler.apply(event);
+    return ResponseEntity.noContent().build();
+}
+```
+
+### 10.4. A Kafka consumer that must not process a message twice
+
+Use raw deserializers, accept the `ConsumerRecord`, and give redelivery of
+in-progress messages a backoff longer than `lock-ttl`.
+
+```java
+@Idempotent(header = "Idempotency-Key", store = RedisIdempotencyStore.QUALIFIER)
+@KafkaListener(id = "orders-listener", topics = "orders")
+void onOrder(ConsumerRecord<String, String> record) {
+    orderService.create(record.value());
+}
+
+@Bean
+DefaultErrorHandler kafkaErrorHandler() {
+    // retry DeliveryInProgressException for longer than idempotency.lock-ttl (30s)
+    return new DefaultErrorHandler(new FixedBackOff(5_000, 10));
+}
+```
+
+### 10.5. Retrying from a client
+
+The key must be created once per operation and reused on every retry:
+
+```java
+String key = UUID.randomUUID().toString();          // once, before the first attempt
+for (int attempt = 1; ; attempt++) {
+    ResponseEntity<Order> response = client.post("/orders", body, key);
+    if (response.getStatusCode().value() != 409 || attempt == 5) {
+        return response;
+    }
+    // 409 with Retry-After means "in progress": wait, then resend the same key.
+    Thread.sleep(retryAfterMillis(response));
+}
+```
+
+Don't retry `409 response_unavailable` (the effect already ran) or `422
+collision` (a bug in the caller).
+
+## 11. Troubleshooting
+
+| Symptom | Likely cause |
+|---------|--------------|
+| Application fails to start naming an `@Idempotent` handler | Both or neither of `header`/`fieldPath`, an invalid `ttl`, a `store` with no matching bean, `WAIT` on a messaging listener, a listener without a `ConsumerRecord`/`Message` parameter, or an async handler on the Postgres store. |
+| Every call executes the handler, with no errors | The store or transport module is missing from the classpath, so nothing is registered. Check the startup log for `Idempotency configuration valid: N @Idempotent endpoint(s) validated`. |
+| Retries are not recognized as retries | The client generates a new key on each attempt, or the key comes from a field that differs between attempts. |
+| `422 collision` on a legitimate retry | The body or query string changed between attempts (including a timestamp inside the body), or a `fieldPath` value isn't unique per intent. |
+| `409 response_unavailable` | The response was over `idempotency.max-body-size`. Not retryable. |
+| `409 in_progress` that never clears | The first request is still running, or it crashed. The key frees itself once `lock-ttl` expires. |
+| `400 key_invalid` | The key is longer than `idempotency.key.max-length` or contains characters outside `[A-Za-z0-9_.:-]`. |
+| Handler ran twice on Redis | `lock-ttl` is shorter than the handler, or Redis lost the key. Look for the `completion no-op` `WARN`. |
+| `500` after a successful handler on Postgres | The commit failed and the effect was rolled back. A retry re-executes ([6.4](#64-postgres)). |
+| Messages requeued in a tight loop (RabbitMQ), or dropped after a few quick retries (Kafka default error handler) | A delivery whose key is still in progress has no retry backoff longer than `lock-ttl` ([5.5](#55-shared-messaging-behavior)). |

@@ -77,9 +77,18 @@ not stacked checks: each request uses one strategy and produces one effective ke
   a recommended convention for the client, **not** validated/required by the
   server beyond that charset.
 - **Replayed response**: signaled with header `Idempotency-Replayed: true` +
-  metrics (replay, 422 collision, 409 concurrency, fail-open). Headers reproduced
+  metrics (one counter per outcome: replay, collision, concurrency, fail-open,
+  fail-closed, response-unavailable). Headers reproduced
   via a **denylist** of volatile ones; `Set-Cookie` is **always** blocked.
 - **Unavailable response**: when the effect completed but the response can't be
-  replayed (not yet written after commit, or body over `max-body-size`), the key is
+  replayed (body over `max-body-size`, or the response-capture filter missing from the chain), the key is
   kept **completed without a replayable body** and a retry gets **409** with reason
   `response_unavailable`. The effect never re-executes. Same contract in both stores.
+- **Request too large**: a request body over `max-request-body-size` on an
+  `@Idempotent` endpoint is rejected with **413** (reason `request_too_large`)
+  while buffering, never read in full.
+- **Messaging**: the same mechanism applies to `@Idempotent` message listeners
+  (Kafka, RabbitMQ, JMS) with the destination as route and the listener id as
+  handler. The key comes from a message header or body field; the HTTP statuses
+  become broker actions (dead-letter, ack-and-skip, nack/redelivery) and `WAIT`
+  is not supported (see `docs/adr/0005`, `docs/prd/messaging-extension.md`).
