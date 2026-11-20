@@ -11,9 +11,8 @@ import java.util.Map;
  * a {@code @Idempotent(store = ...)}/{@code idempotency.default-store} value can
  * address it by: its bean name, and, if present, the {@code @Qualifier} on its
  * {@code @Bean} factory method (the convention every store module uses, e.g.
- * {@code @Bean @Qualifier("redis")} - see {@link
- * io.adzubla.blocks.idempotency.validation.IdempotentHandlerValidator}, the
- * original home of this resolution logic, and {@link
+ * {@code @Bean @Qualifier("redis")} - see the web module's {@code
+ * IdempotentHandlerValidator}, the original home of this resolution logic, and {@link
  * io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry}, which uses it
  * to route each request to the store its endpoint asked for.
  */

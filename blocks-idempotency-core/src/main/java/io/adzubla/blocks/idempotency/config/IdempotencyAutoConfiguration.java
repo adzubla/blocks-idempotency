@@ -30,7 +30,7 @@ import org.springframework.context.annotation.Bean;
  *
  * <p>Not conditional on a web application: this bean set (engine, metrics,
  * principal resolver) is used by every transport adapter (HTTP via {@code
- * blocks-idempotency-web}, and future messaging modules), not just servlet
+ * blocks-idempotency-web}, and the Kafka/RabbitMQ/JMS messaging modules), not just servlet
  * apps. The class keeps its name and package so
  * {@code RedisIdempotencyStoreAutoConfiguration}/{@code
  * PostgresIdempotencyStoreAutoConfiguration}'s load-bearing {@code

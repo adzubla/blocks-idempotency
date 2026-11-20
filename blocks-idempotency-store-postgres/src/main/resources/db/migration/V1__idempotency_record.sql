@@ -9,10 +9,11 @@
 
 CREATE TABLE idempotency_record (
     -- Scope / reservation (operation identity + principal + key value):
-    -- route = where it came in on (HTTP path, Kafka topic); handler = which
-    -- code processes it (HTTP method for HTTP, listener id for Kafka - no
-    -- longer HTTP-method-only since Slice 034 generalized route/handler for
-    -- messaging, so this can't stay sized for "GET"/"POST"/etc).
+    -- route = where it came in on (HTTP path, or a message destination); handler =
+    -- which code processes it (HTTP method, or a listener id), so handler can't be
+    -- sized for "GET"/"POST"/etc. A component longer than its column is stored as
+    -- "sha256:<hex>" (71 chars) by the application, so these limits never reject a
+    -- request (see PostgresIdempotencyStore.fitColumn).
     route            VARCHAR(512)  NOT NULL,
     handler          VARCHAR(255)  NOT NULL,
     principal        VARCHAR(255)  NOT NULL DEFAULT '',   -- '' = unauthenticated route
@@ -22,7 +23,7 @@ CREATE TABLE idempotency_record (
     -- VARCHAR, not CHAR: Postgres space-pads CHAR(n) values on read, which
     -- corrupts any fingerprint shorter than 64 bytes (SHA-256 hex is always
     -- exactly 64 - a fixed test fixture like "fp" is not).
-    fingerprint      VARCHAR(64)   NOT NULL,              -- SHA-256 hex of route+handler+normalized body
+    fingerprint      VARCHAR(64)   NOT NULL,              -- SHA-256 hex of route (HTTP: path+canonical query)+handler+normalized body
 
     -- Fences complete()/release() to the exact reservation attempt that
     -- issued them (ADR 0003): a caller whose reservation was superseded by a

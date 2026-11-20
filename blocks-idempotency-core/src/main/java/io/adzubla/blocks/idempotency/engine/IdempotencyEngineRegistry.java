@@ -12,7 +12,7 @@ import java.util.Map;
  * engine backed by the store its endpoint resolved (ADR 0001: store is chosen
  * per {@code @Idempotent} endpoint, not once for the whole application). Built
  * once at startup from every {@link IdempotencyStore} bean in the context -
- * {@link io.adzubla.blocks.idempotency.validation.IdempotentHandlerValidator}
+ * the web module's {@code IdempotentHandlerValidator}
  * already guarantees every endpoint's resolved qualifier has a matching store
  * bean, so {@link #engine} throwing signals that invariant was somehow
  * violated, not a normal outcome.

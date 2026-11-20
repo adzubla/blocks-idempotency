@@ -11,7 +11,7 @@ import java.util.Optional;
  * 422 from it.
  *
  * <p>{@code fenceToken} is only present on {@link Outcome#RESERVED}: an
- * opaque value identifying *this* reservation attempt, which the primary must
+ * opaque value identifying <em>this</em> reservation attempt, which the primary must
  * echo back to {@link IdempotencyStore#complete} /
  * {@link IdempotencyStore#release}. It fences off a
  * stale primary - one whose {@code lockTtl} already expired and was

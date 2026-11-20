@@ -7,7 +7,8 @@ package io.adzubla.blocks.idempotency.metrics;
  * unavailable, request let through unprotected), a fail-closed activation
  * (store unavailable, request rejected with 503 - the counterpart to
  * fail-open), and a completed-but-not-replayable record (409, no {@code
- * Retry-After} - crash window or a response over {@code max-body-size}).
+ * Retry-After} - a response over {@code max-body-size}, or no capture filter in
+ * the chain).
  * The last two aren't in the original PRD list but share the same
  * store-failure-posture / completed-record branches as the four that are.
  *

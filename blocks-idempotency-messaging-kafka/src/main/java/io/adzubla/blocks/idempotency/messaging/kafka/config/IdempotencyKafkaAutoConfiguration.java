@@ -21,7 +21,8 @@ import org.springframework.kafka.core.KafkaTemplate;
  * Kafka messaging auto-configuration: registers the {@link
  * KafkaIdempotencyAdvice} bean that intercepts every {@code @Idempotent} +
  * {@code @KafkaListener} method, plus the {@link KafkaDeadLetterPublisher} it
- * uses for terminal deliveries (currently collision, Slice 036).
+ * uses for terminal deliveries (collision, Slice 036; missing/invalid key,
+ * Slice 039).
  *
  * <p>{@code @AutoConfigureAfter(IdempotencyAutoConfiguration.class)} paired
  * with {@code @ConditionalOnBean(IdempotencyEngineRegistry.class)} mirrors

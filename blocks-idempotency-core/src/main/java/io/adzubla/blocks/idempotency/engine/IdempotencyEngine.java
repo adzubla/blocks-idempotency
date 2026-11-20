@@ -122,11 +122,11 @@ public class IdempotencyEngine {
 
     /**
      * {@code Unavailable} means different things to different callers: for
-     * HTTP it's a terminal error (crash window, or a body over {@code
-     * max-body-size} - see {@link CachedResponse}), surfaced to the client as
+     * HTTP it's a terminal error (a body over {@code max-body-size}, or the
+     * capture filter missing from the chain - see {@link CachedResponse}), surfaced to the client as
      * a non-retryable 409. A caller that always completes a record with
-     * {@link CachedResponse#empty()} (no response to cache at all - e.g. a
-     * future messaging adapter, per ADR 0004) will see every completed
+     * {@link CachedResponse#empty()} (no response to cache at all - the
+     * Kafka/RabbitMQ/JMS messaging advice, per ADR 0004) will see every completed
      * duplicate resolve to {@code Unavailable} here, never {@code Replay} -
      * that's its routine, expected outcome for a duplicate delivery, not an
      * error condition to propagate.

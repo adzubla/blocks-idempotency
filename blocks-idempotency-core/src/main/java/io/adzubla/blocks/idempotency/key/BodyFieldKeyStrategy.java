@@ -10,7 +10,7 @@ import java.util.Optional;
  * Body-field strategy: the effective key's raw value comes from a JSONPath
  * into the buffered raw request body (see {@code CONTEXT.md} — Key
  * Resolution Strategy). Represents business identity rather than the
- * client's own intent (contrast {@link HeaderKeyStrategy}).
+ * client's own intent (contrast the web module's {@code HeaderKeyStrategy}).
  */
 public final class BodyFieldKeyStrategy {
 

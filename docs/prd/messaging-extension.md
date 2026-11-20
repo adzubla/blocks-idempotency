@@ -101,8 +101,8 @@ explicitly so it isn't "rediscovered" as a bug later:
 `IdempotencyEngine.decisionForCompleted()` only returns `Replay` when
 `response.hasBody()` is true; since messaging's sentinel is always bodyless,
 **every completed messaging duplicate resolves to `EngineDecision.Unavailable`,
-never `Replay`.** In HTTP, `Unavailable` is a terminal error (crash window,
-oversized body — mapped to a 409 the client shouldn't retry). In messaging,
+never `Replay`.** In HTTP, `Unavailable` is a terminal error (oversized body,
+missing capture filter — mapped to a 409 the client shouldn't retry). In messaging,
 because of the sentinel choice above, `Unavailable` becomes **the ordinary,
 expected outcome for every routine duplicate skip** — not an error. See the
 action-mapping table below: it's mapped to ack-and-skip, the same action

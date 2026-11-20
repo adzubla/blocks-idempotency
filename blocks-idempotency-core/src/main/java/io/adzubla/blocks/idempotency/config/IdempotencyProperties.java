@@ -99,7 +99,7 @@ public class IdempotencyProperties {
     }
 
     public static class Metrics {
-        /** Whether outcome counters (replay/collision/concurrency/fail-open) are recorded. */
+        /** Whether outcome counters (replay, collision, concurrency, fail-open, fail-closed, response-unavailable) are recorded. */
         private boolean enabled = true;
 
         public boolean isEnabled() { return enabled; }

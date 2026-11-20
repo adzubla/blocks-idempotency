@@ -43,7 +43,9 @@ import java.util.function.Supplier;
  * fenced {@code DEL}. Both {@code complete}/{@code release} no-op (via the Lua
  * script's own fence-token check) when the caller's token no longer matches the
  * hash's stored one - the reservation was superseded by a fresh caller after this
- * one's lock-ttl passed.
+ * one's lock-ttl passed - or when the key is already gone because it expired and
+ * nobody has reserved it again (a slow primary outrunning {@code lock-ttl}: its
+ * response is not cached, and it logs a {@code WARN}; see the README's Redis section).
  *
  * <p>Hash fields: {@code fingerprint}, {@code token} (fence token, written at
  * reserve and left alone by {@code complete}); {@code status}/{@code headers}

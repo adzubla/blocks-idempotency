@@ -57,6 +57,12 @@ import java.util.Optional;
  * redelivery/backoff policy, same as the Kafka module's fail-closed seam.
  * {@code onStoreFailure=OPEN} (the default) instead resolves to {@code
  * ProceedUnprotected} in the shared skeleton.
+ *
+ * <p>A duplicate whose key is still in progress throws {@link
+ * io.adzubla.blocks.idempotency.messaging.core.DeliveryInProgressException},
+ * handled like fail-closed (session rollback and broker redelivery). A message
+ * that isn't a {@code TextMessage}/{@code BytesMessage} throws {@link
+ * io.adzubla.blocks.idempotency.messaging.core.UnsupportedMessagePayloadException}.
  */
 @Aspect
 public class JmsIdempotencyAdvice extends AbstractMessagingIdempotencyAdvice {

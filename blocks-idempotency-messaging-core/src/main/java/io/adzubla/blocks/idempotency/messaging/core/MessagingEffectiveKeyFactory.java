@@ -5,7 +5,7 @@ import io.adzubla.blocks.idempotency.model.EffectiveKey;
 
 /**
  * Composes the {@link EffectiveKey} for a message-listener delivery: route =
- * the destination (a Kafka topic or a RabbitMQ queue), handler = the listener
+ * the destination (a Kafka topic, a RabbitMQ queue, or a JMS queue/topic), handler = the listener
  * id, then delegates to the transport-neutral {@link EffectiveKeyFactory} to
  * build it (see {@code CONTEXT.md} — Key scope). {@code principal} is always
  * {@link EffectiveKey#NO_PRINCIPAL} — no servlet-principal equivalent exists

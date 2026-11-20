@@ -34,7 +34,7 @@ We decided:
   retryable (REJECT, WAIT-timeout, key gone), with the reason in a header
   (`in_progress|released|timeout`); **409** *without* `Retry-After` (reason
   `response_unavailable`) when the effect completed but its response can't be
-  replayed (crash window or body over `max-body-size`) — terminal, no re-execution;
+  replayed (body over `max-body-size`, or the capture filter missing from the chain) — terminal, no re-execution;
   **422** fingerprint collision (terminal, reason `collision`); **400** missing
   key with `keyRequired=true` (reason `key_required`) or a key value outside the
   configured size/charset (reason `key_invalid`); **503** fail-closed with no

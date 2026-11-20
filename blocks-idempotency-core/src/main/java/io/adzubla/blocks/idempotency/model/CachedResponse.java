@@ -9,18 +9,18 @@ import java.util.Objects;
  * A captured 2xx response, replayed verbatim on a repeat. Headers are already
  * filtered by the denylist ({@code Set-Cookie} always removed); {@code body} may be
  * {@code null} when the effect completed but its response is not replayable
- * (crash window, or body over {@code max-body-size}).
+ * (body over {@code max-body-size}, or the web capture filter wasn't in the chain).
  */
 public record CachedResponse(int status, Map<String, List<String>> headers, byte[] body) {
 
     /**
      * Sentinel for "completed, nothing to cache" - used by a caller with no
-     * response to capture (e.g. a future messaging adapter, which completes a
+     * response to capture (the Kafka/RabbitMQ/JMS messaging advice, which completes a
      * record purely to mark it done, not to replay anything). Since {@link
      * #hasBody()} is false, {@code IdempotencyEngine#decisionForCompleted}
      * resolves a record completed with this to {@code EngineDecision.Unavailable}
-     * - for HTTP that decision means a terminal error (crash window/oversized
-     * body), but a caller that always completes with this sentinel will see
+     * - for HTTP that decision means a terminal error (oversized body, or no
+     * capture filter), but a caller that always completes with this sentinel will see
      * {@code Unavailable} as its routine, expected outcome instead (see ADR
      * 0004), not an error to surface to the end user.
      */

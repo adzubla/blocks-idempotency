@@ -49,7 +49,8 @@ Candidate fixes, for triage:
   `sha256:<hex>` of its UTF-8 bytes (71 characters). Values that fit are
   unchanged, so existing rows still match and no migration is needed. The
   mapping is deterministic, so reserve/find/complete/await all address the
-  same row. A verbatim value can't collide with a digest without a SHA-256
-  preimage. Covered by `PostgresColumnLimitsTest`: over-long components
+  same row. A client could send the literal key `sha256:<hex>` to alias a long
+  value, but computing that digest requires already knowing the long value, so
+  it gains nothing. Covered by `PostgresColumnLimitsTest`: over-long components
   round-trip, long values sharing a prefix stay distinct, and values exactly at
   the limit (including a supplementary character) are stored verbatim.

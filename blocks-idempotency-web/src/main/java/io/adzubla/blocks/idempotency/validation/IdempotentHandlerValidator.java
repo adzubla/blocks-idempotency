@@ -34,7 +34,9 @@ import java.util.concurrent.CompletionStage;
  * IdempotencyStore} bean, resolved via {@link IdempotencyStoreQualifiers} -
  * the same resolution {@link
  * io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry} uses to
- * route each request to its store at runtime). Runs once, after every
+ * route each request to its store at runtime), or {@link #validateAsyncSupport
+ * async support} (an asynchronous handler on a store whose reservation is
+ * thread-bound, i.e. Postgres, is rejected). Runs once, after every
  * singleton (including {@link RequestMappingHandlerMapping}) has finished
  * initializing, so the full set of mapped handlers is available to scan.
  */

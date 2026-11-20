@@ -5,7 +5,7 @@ import io.adzubla.blocks.idempotency.model.EffectiveKey;
 /**
  * Composes the {@link EffectiveKey}: route + handler + authenticated principal +
  * raw key value (see {@code CONTEXT.md} — Key scope). Transport-neutral - the
- * single construction seam every transport adapter (HTTP, and future
+ * single construction seam every transport adapter (HTTP, and the
  * messaging modules) uses, so a real need for validation/normalization at
  * construction time has one place to land.
  */

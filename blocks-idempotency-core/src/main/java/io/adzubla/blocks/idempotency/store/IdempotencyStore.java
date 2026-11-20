@@ -62,16 +62,17 @@ public interface IdempotencyStore {
      * record if {@code waitTimeout} elapses first - the caller tells "timed
      * out" from "released" apart by whether the {@link Optional} is present.
      *
-     * <p>A thread interrupt ends the wait early, like an elapsed {@code
-     * waitTimeout}: the last record observed is returned (still in progress),
-     * and the thread's interrupt status is left set for the caller.
-     *
      * <p>The default polls via {@link #find} at {@code pollInterval} (plus up
      * to {@code pollJitter}) - the core model from ADR 0002 - checking once
      * before the first sleep, so an already-terminal key returns immediately.
-     * Stores with a native blocking primitive (Postgres's row lock) may
-     * override with their own mechanism instead, ignoring {@code
-     * pollInterval}/{@code pollJitter}.
+     * A thread interrupt ends the default's wait early, like an elapsed {@code
+     * waitTimeout}: the last record observed is returned (still in progress),
+     * and the thread's interrupt status is left set for the caller. Stores
+     * with a native blocking primitive (Postgres's row lock) may override
+     * with their own mechanism instead, ignoring {@code
+     * pollInterval}/{@code pollJitter}; that wait is a blocking JDBC call
+     * bounded by the remaining {@code waitTimeout}, which an interrupt does
+     * not cut short.
      *
      * <p>The deadline is measured on the monotonic clock ({@link
      * System#nanoTime()}), not the wall clock or a store's injectable {@code

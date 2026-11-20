@@ -35,7 +35,13 @@ public class JmsDeadLetterPublisher {
         this.deadLetterSuffix = deadLetterSuffix;
     }
 
-    /** Republishes {@code message}'s body/properties, unchanged, to {@code destinationName}'s dead-letter destination. */
+    /**
+     * Republishes {@code message} to {@code destinationName}'s dead-letter destination: the body
+     * of a {@code TextMessage} or {@code BytesMessage} and all application properties, unchanged.
+     * Any other message type ({@code MapMessage}, {@code ObjectMessage}, {@code StreamMessage}) is
+     * republished as a body-less message carrying only its properties, and JMS header fields
+     * ({@code JMSType}, {@code JMSCorrelationID}, ...) are not copied.
+     */
     public void publish(Message message, String destinationName) {
         if (jmsTemplate == null) {
             throw new IllegalStateException("Idempotency dead-letter routing required for destination=" + destinationName

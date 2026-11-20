@@ -50,7 +50,8 @@ import java.util.TreeMap;
  * DeferredResult}, {@code Callable}), {@code afterCompletion} fires after the
  * async dispatch that writes the result, possibly on a different thread than
  * {@code preHandle} - fine for a store with no thread affinity, but not for
- * {@code postgres}, whose reservation is a thread-bound transaction.
+ * {@code postgres}, whose reservation is a thread-bound transaction (startup
+ * validation rejects that combination).
  *
  * <p>Slice 001-012 scope: header or body-field key strategy (whichever
  * annotation attribute is non-empty - exactly one is guaranteed by startup

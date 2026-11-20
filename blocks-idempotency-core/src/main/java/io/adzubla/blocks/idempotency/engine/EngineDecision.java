@@ -43,8 +43,11 @@ public sealed interface EngineDecision {
     }
 
     /**
-     * The effect completed but its response isn't replayable (crash window,
-     * or body over {@code max-body-size} at completion time); the caller
+     * The effect completed but its response isn't replayable (the body was
+     * over {@code max-body-size} at completion time, or nothing could be
+     * captured because the web capture filter wasn't in the chain; messaging
+     * callers always complete with {@code CachedResponse.empty()}, so it is
+     * their routine outcome for a duplicate - see ADR 0004); the caller
      * should reject with 409, terminal, without executing or replaying, and
      * no {@code Retry-After} - retrying can never succeed.
      */

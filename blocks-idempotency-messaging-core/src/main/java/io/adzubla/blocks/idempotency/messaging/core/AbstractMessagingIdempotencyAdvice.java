@@ -37,7 +37,10 @@ import java.util.Optional;
  * <p>The two terminal actions whose <em>mechanism</em> genuinely differs
  * between brokers - dead-lettering a poison message and rejecting a
  * fail-closed delivery for broker redelivery - are delegated to {@link
- * MessageDelivery#deadLetter} / {@link MessageDelivery#failClosed}. {@code
+ * MessageDelivery#deadLetter} / {@link MessageDelivery#failClosed}. A duplicate
+ * whose key is still in progress is not acked and not dead-lettered: it fails
+ * with {@link DeliveryInProgressException} so the broker redelivers it once the
+ * key resolves (ADR 0005, amended). {@code
  * whenInProgress=WAIT} is disabled for v1 (ADR 0005, enforced at startup by
  * {@code AbstractMessagingListenerValidator}), so {@link RejectReason#RELEASED}/
  * {@link RejectReason#TIMEOUT} (WAIT-only outcomes) aren't expected to reach

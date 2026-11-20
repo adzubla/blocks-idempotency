@@ -7,7 +7,14 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Marks a controller handler as idempotent.
+ * Marks a controller handler, or a {@code @KafkaListener}/{@code @RabbitListener}/{@code @JmsListener}
+ * message listener, as idempotent. The per-attribute notes below describe the HTTP behavior; for
+ * listeners the equivalent outcomes are described on the broker modules' advice classes
+ * (ADR 0004/0005): a rejected or invalid delivery is dead-lettered, an in-progress duplicate is
+ * redelivered, and {@code WAIT} is rejected at startup.
+ *
+ * <p>{@link #ttl()}, {@link #store()}, {@link #onStoreFailure()} and {@link #whenInProgress()}
+ * apply to both. A listener's {@code ttl} is how long its completion record suppresses duplicates.
  *
  * <p>Exactly one of {@link #header()} / {@link #fieldPath()} must be set — validated
  * at startup. All attributes except {@link #keyRequired()} inherit the global default
@@ -35,7 +42,10 @@ public @interface Idempotent {
     /** Response TTL as a {@code Duration} string (e.g. {@code "24h"}). {@code ""} inherits the global default. */
     String ttl() default "";
 
-    /** Whether the client must supply the key (400 if absent). Fixed default; does not inherit the global. */
+    /**
+     * Whether the client must supply the key (HTTP: 400 if absent; a listener delivery without one is
+     * dead-lettered). Fixed default; does not inherit the global.
+     */
     boolean keyRequired() default true;
 
     /** Posture when the store is unavailable. {@code DEFAULT} inherits the global. */
@@ -48,7 +58,7 @@ public @interface Idempotent {
     enum OnStoreFailure {
         /** Let the request through unprotected. */
         OPEN,
-        /** Reject with 503. */
+        /** Reject with 503 (a listener delivery is handed back to the broker instead). */
         CLOSED,
         /** Inherit the global default. */
         DEFAULT
@@ -56,9 +66,9 @@ public @interface Idempotent {
 
     /** Concurrency behavior for an in-progress key (see ADR 0002). */
     enum WhenInProgress {
-        /** Immediate 409. */
+        /** Immediate 409 (a listener delivery is failed for broker redelivery instead). */
         REJECT,
-        /** Block until the primary completes, then replay. */
+        /** Block until the primary completes, then replay. HTTP only; rejected at startup on message listeners. */
         WAIT,
         /** Inherit the global default. */
         DEFAULT

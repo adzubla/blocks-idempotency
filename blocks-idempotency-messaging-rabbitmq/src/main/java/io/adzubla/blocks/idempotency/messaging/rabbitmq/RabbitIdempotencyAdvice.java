@@ -28,8 +28,8 @@ import java.util.Optional;
  *
  * <p>The broker-neutral decision skeleton (key resolution, fingerprinting, the
  * reserve/complete/release flow, and the full PRD §5 decision table) lives in
- * {@link AbstractMessagingIdempotencyAdvice}, shared with the Kafka module
- * since Slice 048. This class supplies only the RabbitMQ-specific seams via a
+ * {@link AbstractMessagingIdempotencyAdvice}, shared with the Kafka and JMS
+ * modules since Slice 048. This class supplies only the RabbitMQ-specific seams via a
  * {@link RabbitMessageDelivery}: reading the header/body off a {@link Message},
  * and the two terminal actions whose mechanism is RabbitMQ-specific.
  *
@@ -51,6 +51,12 @@ import java.util.Optional;
  * queue's own dead-letter configuration rather than in code. {@code
  * onStoreFailure=OPEN} (the default) instead resolves to {@code
  * ProceedUnprotected} in the shared skeleton.
+ *
+ * <p>A duplicate whose key is still in progress throws {@link
+ * io.adzubla.blocks.idempotency.messaging.core.DeliveryInProgressException},
+ * which is an ordinary listener failure: unlike the two cases above, the
+ * container <em>requeues</em> it (Spring AMQP's default), so give the
+ * container a retry backoff rather than a tight redelivery loop.
  */
 @Aspect
 public class RabbitIdempotencyAdvice extends AbstractMessagingIdempotencyAdvice {

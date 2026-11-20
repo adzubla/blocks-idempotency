@@ -12,7 +12,8 @@ import java.nio.charset.StandardCharsets;
  * Operations are isolated; {@code principal} falls back to a sentinel on
  * unauthenticated/unscoped routes.
  *
- * <p>Each store maps this to its own representation (Postgres composite PK, Redis
+ * <p>Each store maps this to its own representation (Postgres composite PK over the four
+ * components, a component too long for its column stored as a digest; Redis
  * hashed key).
  */
 public record EffectiveKey(String route, String handler, String principal, String value) {

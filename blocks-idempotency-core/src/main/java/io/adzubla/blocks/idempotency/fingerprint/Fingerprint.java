@@ -13,7 +13,10 @@ import java.util.HexFormat;
 /**
  * SHA-256 of route + handler + the normalized (canonical key-ordered) request
  * body, used to detect a key reused with a different payload (see
- * {@code CONTEXT.md} — Collision).
+ * {@code CONTEXT.md} — Collision). The {@code route} is whatever the caller
+ * passes: a message listener passes its destination, and the HTTP interceptor
+ * passes the request path plus the canonical query string (issue 060), so the
+ * same key with different query parameters is a collision, not a replay.
  *
  * <p>The body is parsed and re-serialized with object keys sorted
  * (recursively), so cosmetic field reordering doesn't change the

@@ -8,7 +8,8 @@ import java.time.Duration;
  * Postgres-store-specific settings (Slice 018) - distinct from {@code
  * idempotency.lock-ttl} (the reservation's own staleness TTL, {@code
  * IdempotencyProperties}, store-agnostic): these instead bound the native
- * concurrency mechanism that's unique to this store (ADR 0001/0002/0003).
+ * concurrency mechanism that's unique to this store (ADR 0001/0002/0003) and
+ * configure its expiry sweep ({@link Cleanup}).
  */
 @ConfigurationProperties(prefix = "idempotency.postgres")
 public class PostgresStoreProperties {

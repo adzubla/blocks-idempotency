@@ -21,7 +21,7 @@ public enum RejectReason {
     RELEASED("released"),
     /** WAIT mode gave up before the primary reached a terminal state. */
     TIMEOUT("timeout"),
-    /** The effect completed but its response isn't replayable (crash window, or body over max-body-size). */
+    /** The effect completed but its response isn't replayable (body over max-body-size, or no capture filter in the chain). */
     RESPONSE_UNAVAILABLE("response_unavailable"),
     /** {@code keyRequired=true} but the header/body-field key was absent from the request. */
     KEY_REQUIRED("key_required"),

@@ -4,8 +4,9 @@ import io.adzubla.blocks.idempotency.engine.RejectReason;
 import org.springframework.http.HttpStatus;
 
 /**
- * The effect completed but its response isn't replayable (crash window, or the
- * body was over {@code max-body-size} at completion time). Terminal - no
+ * The effect completed but its response isn't replayable (the body was over
+ * {@code max-body-size} at completion time, or the capture filter wasn't in the
+ * chain). Terminal - no
  * {@code Retry-After}, retrying can never succeed.
  */
 public final class IdempotencyResponseUnavailableException extends IdempotencyException {

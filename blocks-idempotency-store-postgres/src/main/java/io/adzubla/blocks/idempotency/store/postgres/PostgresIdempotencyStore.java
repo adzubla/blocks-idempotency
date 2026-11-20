@@ -426,9 +426,10 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
      * complete}/{@code release} (simulating a crash - the one thing
      * {@code Thread.sleep} in the shared contract test suite can't
      * literally reproduce, since it doesn't close the connection). Production
-     * code always resolves via {@link #complete}/{@link #release}, driven by
-     * {@code IdempotencyInterceptor#afterCompletion}, which is guaranteed to
-     * run.
+     * code resolves via {@link #complete}/{@link #release}, driven by
+     * {@code IdempotencyInterceptor#afterCompletion}; a reservation that
+     * escapes that anyway is rolled back by the next {@code reserve()} on
+     * the thread (see {@link #abandonLeakedScope}).
      */
     void abandonDanglingReservationForTests() {
         ReservationScope current = scope.get();
@@ -440,10 +441,11 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
 
     /**
      * Records the outer, commit/rollback-owning {@link TransactionStatus} for
-     * the reservation now held by this thread, alongside the fence token that
-     * currently owns it. A nested {@code reserve()} call (the contract test's
-     * same-thread self-supersede case) must not replace the outer status with
-     * its own merely-participating one - only the token moves.
+     * the reservation now held by this thread, alongside its key and the fence
+     * token that currently owns it. A nested {@code reserve()} call for the
+     * same key (the contract test's same-thread self-supersede case) must not
+     * replace the outer status with its own merely-participating one - only
+     * the token moves.
      */
     private void bindScope(TransactionStatus status, EffectiveKey key, String fenceToken) {
         ReservationScope existing = scope.get();
@@ -509,8 +511,14 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
      * deterministic, so reserve/find/complete/await all address the same row,
      * and a value that fits is stored exactly as before, so existing rows are
      * unaffected and no migration is needed. Lengths are counted in code
-     * points, the unit {@code VARCHAR(n)} limits. A verbatim value can't
-     * collide with a digest without a SHA-256 preimage.
+     * points, the unit {@code VARCHAR(n)} limits.
+     *
+     * <p>A value that fits can still be exactly the string {@code sha256:<hex>},
+     * which then addresses the same row as the long value it digests. That
+     * takes sending the digest deliberately, and computing it requires
+     * already knowing the long value, so it grants nothing the sender
+     * couldn't already do. It matters only to a store inspector reading
+     * rows.
      */
     static String fitColumn(String value, int columnLength) {
         if (value.codePointCount(0, value.length()) <= columnLength) {

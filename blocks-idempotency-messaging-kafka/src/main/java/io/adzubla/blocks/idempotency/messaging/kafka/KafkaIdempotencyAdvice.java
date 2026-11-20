@@ -29,8 +29,8 @@ import java.util.Optional;
  *
  * <p>The broker-neutral decision skeleton (key resolution, fingerprinting, the
  * reserve/complete/release flow, and the full PRD §5 decision table) lives in
- * {@link AbstractMessagingIdempotencyAdvice}, shared with the RabbitMQ module
- * since Slice 048. This class supplies only the Kafka-specific seams via a
+ * {@link AbstractMessagingIdempotencyAdvice}, shared with the RabbitMQ and JMS
+ * modules since Slice 048. This class supplies only the Kafka-specific seams via a
  * {@link KafkaMessageDelivery}: reading the header/body off a {@link
  * ConsumerRecord}, and the two terminal actions whose mechanism is
  * Kafka-specific.
@@ -44,6 +44,13 @@ import java.util.Optional;
  * broker to redeliver once the store has likely recovered. {@code
  * onStoreFailure=OPEN} (the default) instead resolves to {@code
  * ProceedUnprotected} in the shared skeleton.
+ *
+ * <p>A duplicate whose key is still in progress is neither acked nor
+ * dead-lettered: it throws {@link
+ * io.adzubla.blocks.idempotency.messaging.core.DeliveryInProgressException} for
+ * redelivery, exactly like fail-closed. A {@code ConsumerRecord} value that
+ * isn't a {@code byte[]}/{@code String} (or null) throws {@link
+ * io.adzubla.blocks.idempotency.messaging.core.UnsupportedMessagePayloadException}.
  *
  * <p>Whether a thrown exception actually leaves the delivery un-acked - and
  * how soon it's retried ("nack-with-backoff", PRD §5) rather than exhausting a
