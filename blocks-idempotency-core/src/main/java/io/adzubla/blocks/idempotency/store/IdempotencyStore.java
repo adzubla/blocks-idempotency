@@ -25,6 +25,17 @@ public interface IdempotencyStore {
      */
     ReservationResult reserve(EffectiveKey key, String fingerprint, Duration lockTtl);
 
+    /**
+     * Whether a reservation may be completed or released on a different thread than the one that
+     * made it, as an asynchronous HTTP handler ({@code CompletableFuture}, {@code DeferredResult},
+     * {@code Callable}, streaming bodies) requires. A store whose reservation is bound to the
+     * reserving thread (Postgres: the reservation is that thread's open transaction) returns
+     * {@code false}, and startup validation rejects asynchronous {@code @Idempotent} handlers on it.
+     */
+    default boolean supportsAsyncHandlers() {
+        return true;
+    }
+
     /** Look up the current record, if any. */
     Optional<IdempotencyRecord> find(EffectiveKey key);
 

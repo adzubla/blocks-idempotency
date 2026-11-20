@@ -182,5 +182,9 @@ capture.
   fails: `complete()` runs on a different thread than `reserve()`, finds no
   thread-local scope, and returns as a fenced no-op. The client receives the
   handler's `2xx` while the transaction stays open, uncommitted, on the original
-  thread. Nothing rejects an async return type on a `store="postgres"` endpoint at
-  startup yet.
+  thread. **Now rejected at startup (2026-11-20, issue 064):** the store SPI
+  gained `supportsAsyncHandlers()` (default `true`), Postgres returns `false`,
+  and `IdempotentHandlerValidator` fails startup for an async return type
+  (`Callable`, `WebAsyncTask`, `DeferredResult`, `CompletionStage`,
+  `ResponseBodyEmitter`/`SseEmitter`, `StreamingResponseBody`, reactive types,
+  including when wrapped in `ResponseEntity`) on such a store.

@@ -32,10 +32,14 @@ public class PostgresStoreProperties {
     public static class Cleanup {
         private boolean enabled = true;
         private Duration interval = Duration.ofMinutes(5);
+        /** Rows deleted per statement; a sweep runs batches until one comes back short. */
+        private int batchSize = PostgresIdempotencyCleanupJob.DEFAULT_BATCH_SIZE;
 
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }
         public Duration getInterval() { return interval; }
         public void setInterval(Duration interval) { this.interval = interval; }
+        public int getBatchSize() { return batchSize; }
+        public void setBatchSize(int batchSize) { this.batchSize = batchSize; }
     }
 }

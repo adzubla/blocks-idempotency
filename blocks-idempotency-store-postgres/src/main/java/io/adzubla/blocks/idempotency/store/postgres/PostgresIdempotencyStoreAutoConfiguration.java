@@ -51,6 +51,7 @@ public class PostgresIdempotencyStoreAutoConfiguration {
     @ConditionalOnMissingBean(PostgresIdempotencyCleanupJob.class)
     @ConditionalOnProperty(prefix = "idempotency.postgres.cleanup", name = "enabled", havingValue = "true", matchIfMissing = true)
     public PostgresIdempotencyCleanupJob postgresIdempotencyCleanupJob(JdbcTemplate jdbcTemplate, PostgresStoreProperties properties) {
-        return new PostgresIdempotencyCleanupJob(jdbcTemplate, properties.getCleanup().getInterval());
+        return new PostgresIdempotencyCleanupJob(jdbcTemplate, properties.getCleanup().getInterval(),
+                properties.getCleanup().getBatchSize());
     }
 }

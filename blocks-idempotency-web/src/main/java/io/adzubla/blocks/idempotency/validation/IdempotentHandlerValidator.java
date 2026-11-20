@@ -9,11 +9,21 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.boot.convert.DurationStyle;
+import org.springframework.core.ReactiveAdapterRegistry;
+import org.springframework.core.ResolvableType;
+import org.springframework.http.HttpEntity;
+import org.springframework.web.context.request.async.DeferredResult;
+import org.springframework.web.context.request.async.WebAsyncTask;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import java.lang.reflect.Method;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletionStage;
 
 /**
  * Fails application startup with a clear message if any {@code @Idempotent}
@@ -29,6 +39,10 @@ import java.util.Map;
  * initializing, so the full set of mapped handlers is available to scan.
  */
 public class IdempotentHandlerValidator implements SmartInitializingSingleton {
+
+    /** Return types Spring MVC completes on a different thread than the one that invoked the handler. */
+    private static final List<Class<?>> ASYNC_RETURN_TYPES = List.of(Callable.class, WebAsyncTask.class,
+            DeferredResult.class, CompletionStage.class, ResponseBodyEmitter.class, StreamingResponseBody.class);
 
     private static final Logger log = LoggerFactory.getLogger(IdempotentHandlerValidator.class);
 
@@ -56,6 +70,7 @@ public class IdempotentHandlerValidator implements SmartInitializingSingleton {
             validateKeyStrategy(method, annotation);
             validateTtl(method, annotation);
             validateStore(method, annotation, storesByQualifier);
+            validateAsyncSupport(method, annotation, storesByQualifier);
             validatedCount++;
             log.info("Idempotent endpoint: {} strategy={}={} store={}", describe(method),
                     annotation.header().isEmpty() ? "fieldPath" : "header",
@@ -99,6 +114,38 @@ public class IdempotentHandlerValidator implements SmartInitializingSingleton {
                     + " bean found for store qualifier '" + qualifier + "' - is the idempotency-store-" + qualifier
                     + " module on the classpath?");
         }
+    }
+
+    /**
+     * Rejects an asynchronous handler on a store whose reservation is bound to the reserving
+     * thread ({@link IdempotencyStore#supportsAsyncHandlers()} - Postgres): the handler would
+     * finish on another thread, its result would never be committed, and the open reservation
+     * would stay bound to a pooled servlet thread (issue 064).
+     */
+    private void validateAsyncSupport(Method method, Idempotent annotation, Map<String, IdempotencyStore> storesByQualifier) {
+        String qualifier = annotation.store().isEmpty() ? properties.getDefaultStore() : annotation.store();
+        IdempotencyStore store = storesByQualifier.get(qualifier);
+        if (store.supportsAsyncHandlers() || !isAsyncReturnType(ResolvableType.forMethodReturnType(method))) {
+            return;
+        }
+        throw new IllegalStateException(describe(method) + ": returns " + method.getGenericReturnType().getTypeName()
+                + ", an async result, but store '" + qualifier + "' doesn't support async handlers - its reservation is "
+                + "bound to the reserving thread. Make the handler synchronous, or use a store that supports async handlers");
+    }
+
+    private static boolean isAsyncReturnType(ResolvableType returnType) {
+        Class<?> type = returnType.resolve(Object.class);
+        if (HttpEntity.class.isAssignableFrom(type)) {
+            // ResponseEntity<StreamingResponseBody>, ResponseEntity<DeferredResult<...>>, etc.
+            return isAsyncReturnType(returnType.as(HttpEntity.class).getGeneric(0));
+        }
+        for (Class<?> asyncType : ASYNC_RETURN_TYPES) {
+            if (asyncType.isAssignableFrom(type)) {
+                return true;
+            }
+        }
+        // Reactive types (Mono, Flux, ...) that Spring MVC adapts to an async result.
+        return ReactiveAdapterRegistry.getSharedInstance().getAdapter(type) != null;
     }
 
     private static String describe(Method method) {

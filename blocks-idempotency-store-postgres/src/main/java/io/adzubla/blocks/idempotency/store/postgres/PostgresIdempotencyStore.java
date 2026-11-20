@@ -73,10 +73,11 @@ import java.util.UUID;
  * transaction under MVCC, so it would see nothing and return instantly
  * rather than wait.
  *
- * <p>Not yet supported: async request handling - {@code Callable}/{@code
+ * <p>Not supported: async request handling - {@code Callable}/{@code
  * DeferredResult}/WebFlux-style handlers can hop threads between {@code
  * reserve()} and the handler body, which breaks the thread-bound transaction
- * this store relies on (ADR 0003's consequences).
+ * this store relies on (ADR 0003's consequences). {@link #supportsAsyncHandlers()}
+ * reports this, so startup validation rejects such handlers.
  */
 public class PostgresIdempotencyStore implements IdempotencyStore {
 
@@ -248,6 +249,16 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
                 return true;
             }
         }
+        return false;
+    }
+
+    /**
+     * {@code false}: the reservation is the reserving thread's open, thread-bound transaction,
+     * so an asynchronous handler that finishes on another thread could never commit or roll it
+     * back - and would leave it bound to a pooled servlet thread (issue 064).
+     */
+    @Override
+    public boolean supportsAsyncHandlers() {
         return false;
     }
 

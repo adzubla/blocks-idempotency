@@ -11,7 +11,14 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.async.DeferredResult;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
+
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -94,6 +101,31 @@ class IdempotentHandlerValidatorTest {
                 .run(context -> assertThat(context).hasNotFailed());
     }
 
+    @Test
+    void anAsyncHandlerOnAStoreWithoutAsyncSupportFailsStartupForEveryAsyncReturnShape() {
+        for (Class<?> controller : List.of(CompletableFutureController.class, DeferredResultController.class,
+                CallableController.class, StreamingResponseEntityController.class)) {
+            runner.withUserConfiguration(SyncOnlyStoreConfig.class, controller).run(context -> {
+                assertThat(context).as(controller.getSimpleName()).hasFailed();
+                assertThat(context.getStartupFailure())
+                        .hasMessageContaining(controller.getSimpleName())
+                        .hasMessageContaining("sync-only")
+                        .hasMessageContaining("async");
+            });
+        }
+    }
+
+    @Test
+    void anAsyncHandlerOnAStoreWithAsyncSupportStartsNormally() {
+        runner.withUserConfiguration(AsyncOnDefaultStoreController.class).run(context -> assertThat(context).hasNotFailed());
+    }
+
+    @Test
+    void aSynchronousHandlerOnAStoreWithoutAsyncSupportStartsNormally() {
+        runner.withUserConfiguration(SyncOnlyStoreConfig.class, SyncOnSyncOnlyStoreController.class)
+                .run(context -> assertThat(context).hasNotFailed());
+    }
+
     @Configuration(proxyBeanMethods = false)
     @EnableAutoConfiguration
     static class AutoConfig {
@@ -157,6 +189,75 @@ class IdempotentHandlerValidatorTest {
     static class ValidController {
         @Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER)
         @GetMapping("/valid")
+        ResponseEntity<Void> handle() {
+            return ResponseEntity.ok().build();
+        }
+    }
+
+    /** A store that, like Postgres, binds its reservation to the reserving thread. */
+    @Configuration(proxyBeanMethods = false)
+    static class SyncOnlyStoreConfig {
+        @Bean
+        @Qualifier("sync-only")
+        IdempotencyStore syncOnlyIdempotencyStore() {
+            return new InMemoryIdempotencyStore() {
+                @Override
+                public boolean supportsAsyncHandlers() {
+                    return false;
+                }
+            };
+        }
+    }
+
+    @RestController
+    static class CompletableFutureController {
+        @Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER, store = "sync-only")
+        @PostMapping("/future")
+        CompletableFuture<String> handle() {
+            return CompletableFuture.completedFuture("ok");
+        }
+    }
+
+    @RestController
+    static class DeferredResultController {
+        @Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER, store = "sync-only")
+        @PostMapping("/deferred")
+        DeferredResult<String> handle() {
+            return new DeferredResult<>();
+        }
+    }
+
+    @RestController
+    static class CallableController {
+        @Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER, store = "sync-only")
+        @PostMapping("/callable")
+        Callable<String> handle() {
+            return () -> "ok";
+        }
+    }
+
+    @RestController
+    static class StreamingResponseEntityController {
+        @Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER, store = "sync-only")
+        @PostMapping("/streaming")
+        ResponseEntity<StreamingResponseBody> handle() {
+            return ResponseEntity.ok(out -> out.write(1));
+        }
+    }
+
+    @RestController
+    static class AsyncOnDefaultStoreController {
+        @Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER)
+        @PostMapping("/future-default")
+        CompletableFuture<String> handle() {
+            return CompletableFuture.completedFuture("ok");
+        }
+    }
+
+    @RestController
+    static class SyncOnSyncOnlyStoreController {
+        @Idempotent(header = Idempotent.IDEMPOTENCY_KEY_HEADER, store = "sync-only")
+        @PostMapping("/sync")
         ResponseEntity<Void> handle() {
             return ResponseEntity.ok().build();
         }

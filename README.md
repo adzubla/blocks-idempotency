@@ -419,8 +419,8 @@ Web-specific global configuration is `idempotency.scope.principal-enabled` /
 - **Async handlers** (`CompletableFuture`, `DeferredResult`, `Callable`) are
   supported with the Redis and in-memory stores: the key is reserved once,
   and the record is completed or released with the asynchronous result.
-  They are not supported with the Postgres store (see
-  [6.4 Postgres](#64-postgres)). A streaming handler (`StreamingResponseBody`,
+  They are not supported with the Postgres store, and startup fails if one is
+  configured (see [6.4 Postgres](#64-postgres)). A streaming handler (`StreamingResponseBody`,
   `SseEmitter`) on an `@Idempotent` endpoint is buffered in full before
   anything reaches the client, since the whole body is needed for replay.
 
@@ -764,7 +764,35 @@ idempotency.postgres.lock-timeout=2s
 idempotency.postgres.cleanup.enabled=true
 # how often the sweep runs
 idempotency.postgres.cleanup.interval=5m
+# rows deleted per statement; a sweep repeats until a batch comes back short
+idempotency.postgres.cleanup.batch-size=1000
 ```
+
+The sweep deletes in short batches, each committed on its own, and skips
+any row another transaction holds (`FOR UPDATE SKIP LOCKED`). It never waits
+on a reservation in flight, and sweeps running on several instances don't
+block each other.
+
+**Size the connection pool for blocked duplicates, not just requests.** With
+this store, every in-flight `@Idempotent` request holds a pooled connection
+for as long as its handler runs, because the reservation *is* that
+connection's open transaction. Every concurrent duplicate of an in-flight
+key takes a connection too, blocking on the row lock for up to
+`idempotency.postgres.lock-timeout`, and under `whenInProgress = WAIT` for
+up to `idempotency.wait-timeout` more. A retry storm against a slow endpoint
+can therefore hold the whole pool, and unrelated requests that need a
+connection stall. To guard against it:
+
+- Budget the pool for *peak concurrent primaries + peak concurrent
+  duplicates*, not just your request concurrency.
+- Keep `lock-timeout` short on `REJECT` endpoints. A shorter wait frees the
+  duplicate's connection sooner. The trade-off is that a duplicate which
+  would have outlasted the primary and been replayed gets `409` +
+  `Retry-After` instead, and retries.
+- Prefer `REJECT` over `WAIT` for slow handlers on this store, since a `WAIT`
+  duplicate holds its connection for the whole wait.
+- Watch the pool's own metrics (e.g. Hikari's `hikaricp.connections.pending`)
+  alongside the `idempotency.outcomes` `concurrency` count.
 
 **Use when** the protected effect is itself a write to this same Postgres
 database — creating an order row, for instance — and you want a real
@@ -782,12 +810,14 @@ listener the delivery fails and is left to the broker to redeliver. Either
 way the key is free again, so a retry re-executes.
 
 **Not supported with async handlers** (`Callable`/`DeferredResult`/
-`CompletableFuture`/WebFlux): those complete on a different thread than the
+`CompletableFuture`/`WebAsyncTask`, streaming bodies such as
+`StreamingResponseBody`/`SseEmitter`, reactive types, and any of these
+wrapped in `ResponseEntity`). They complete on a different thread than the
 one that reserved the key, which breaks the thread-bound transaction this
-store relies on. Nothing rejects this combination at startup: the client
-receives the handler's `2xx`, but the transaction is never committed and
-stays open on the original thread. Use a synchronous handler with the
-Postgres store. The same thread-bound assumption extends to message
+store relies on: the result would never be committed, and the open
+transaction would stay bound to a pooled servlet thread. **Startup fails**
+for such a handler on the Postgres store, naming the handler and its return
+type. Use a synchronous handler with the Postgres store. The same thread-bound assumption extends to message
 listeners — it works as long as the listener processes each delivery
 synchronously on a single thread, which is the default for
 `@KafkaListener`/`@RabbitListener`/`@JmsListener`.

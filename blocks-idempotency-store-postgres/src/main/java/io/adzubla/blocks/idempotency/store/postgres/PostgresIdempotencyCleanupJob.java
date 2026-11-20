@@ -23,20 +23,47 @@ import java.util.concurrent.TimeUnit;
  * so there's no property string to re-parse, and this works in any context
  * regardless of whether task-scheduling auto-configuration happens to be
  * present.
+ *
+ * <p>Each sweep deletes in bounded batches, each its own short auto-committed
+ * statement, rather than one {@code DELETE} of everything expired. That avoids
+ * long-running deletes and WAL spikes at volume (issue 066). {@code FOR UPDATE SKIP
+ * LOCKED} makes a batch skip rows another transaction holds - an expired row an open
+ * reservation is currently superseding, or rows a concurrent sweep from another
+ * instance already claimed - instead of waiting on them. A skipped row is either
+ * live again once that transaction commits, or picked up by a later sweep.
  */
 public class PostgresIdempotencyCleanupJob implements InitializingBean, DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(PostgresIdempotencyCleanupJob.class);
 
-    private static final String DELETE_EXPIRED = "DELETE FROM idempotency_record WHERE expires_at < clock_timestamp()";
+    /** Rows deleted per batch when no batch size is configured. */
+    public static final int DEFAULT_BATCH_SIZE = 1000;
+
+    private static final String DELETE_EXPIRED_BATCH = """
+            DELETE FROM idempotency_record
+            WHERE ctid IN (
+                SELECT ctid FROM idempotency_record
+                WHERE expires_at < clock_timestamp()
+                LIMIT ?
+                FOR UPDATE SKIP LOCKED)
+            """;
 
     private final JdbcTemplate jdbc;
     private final Duration interval;
+    private final int batchSize;
     private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(PostgresIdempotencyCleanupJob::newDaemonThread);
 
     public PostgresIdempotencyCleanupJob(JdbcTemplate jdbc, Duration interval) {
+        this(jdbc, interval, DEFAULT_BATCH_SIZE);
+    }
+
+    public PostgresIdempotencyCleanupJob(JdbcTemplate jdbc, Duration interval, int batchSize) {
+        if (batchSize < 1) {
+            throw new IllegalArgumentException("idempotency.postgres.cleanup.batch-size must be at least 1, was " + batchSize);
+        }
         this.jdbc = jdbc;
         this.interval = interval;
+        this.batchSize = batchSize;
     }
 
     @Override
@@ -57,9 +84,19 @@ public class PostgresIdempotencyCleanupJob implements InitializingBean, Disposab
         }
     }
 
-    /** Deletes every row past its {@code expires_at}; returns the number of rows deleted. Public so a test can trigger it directly, without waiting on the schedule. */
+    /**
+     * Deletes every row past its {@code expires_at} that no other transaction holds, in batches of
+     * {@code batchSize}; returns the number of rows deleted. Public so a test can trigger it
+     * directly, without waiting on the schedule.
+     */
     public int deleteExpiredRecords() {
-        return jdbc.update(DELETE_EXPIRED);
+        int total = 0;
+        int deleted;
+        do {
+            deleted = jdbc.update(DELETE_EXPIRED_BATCH, batchSize);
+            total += deleted;
+        } while (deleted == batchSize);
+        return total;
     }
 
     @Override
