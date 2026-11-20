@@ -14,6 +14,7 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.fail;
 
 /**
  * The {@link IdempotencyStore} contract (see ADR 0001), defined once and run
@@ -22,18 +23,27 @@ import static org.assertj.core.api.Assertions.assertThat;
  * own modules, each supplying a {@link #createStore()} backed by
  * Testcontainers (Slice 015/017).
  *
- * <p>TTL tests use a short, real duration and a real sleep rather than an
- * injectable {@link java.time.Clock} - not every implementation can be driven
- * by a fake clock (Redis/Postgres expire on their own server-side clock), so
- * this keeps the suite genuinely store-agnostic at the cost of a little
- * wall-clock time per test.
+ * <p>TTL tests use a short, real duration rather than an injectable
+ * {@link java.time.Clock} - not every implementation can be driven by a fake
+ * clock (Redis/Postgres expire on their own server-side clock), so this keeps
+ * the suite genuinely store-agnostic. Expiry is judged against each store's
+ * wall clock, which can step (even backwards - observed on WSL2) relative to
+ * the monotonic clock {@code Thread.sleep} uses, so the suite never assumes
+ * "slept past the TTL" means "expired": {@link #awaitExpiry} polls until the
+ * store itself reports the key absent, bounded by a monotonic deadline. Any
+ * reservation whose expiry is <em>not</em> under test uses {@link #STABLE_TTL}
+ * so a forward clock step can't expire it mid-test.
  */
 public abstract class IdempotencyStoreContractTest {
 
+    /** Short TTL for the record whose expiry a test is exercising. */
     private static final Duration TTL = Duration.ofMillis(150);
-    private static final Duration PAST_TTL_SLEEP = TTL.plusMillis(150);
+    /** TTL for every record that must stay live for the whole test. */
+    private static final Duration STABLE_TTL = Duration.ofSeconds(60);
+    private static final Duration EXPIRY_DEADLINE = Duration.ofSeconds(15);
+    private static final Duration EXPIRY_POLL_INTERVAL = Duration.ofMillis(20);
 
-    private static final Duration AWAIT_RESERVE_TTL = Duration.ofSeconds(10);
+    private static final Duration AWAIT_RESERVE_TTL = STABLE_TTL;
     private static final Duration AWAIT_WAIT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration AWAIT_TIMEOUT_BUDGET = Duration.ofMillis(150);
     private static final Duration AWAIT_POLL_INTERVAL = Duration.ofMillis(20);
@@ -53,7 +63,7 @@ public abstract class IdempotencyStoreContractTest {
 
     @Test
     void aFreshKeyIsReserved() {
-        ReservationResult result = store.reserve(key("k1"), "fp", TTL);
+        ReservationResult result = store.reserve(key("k1"), "fp", STABLE_TTL);
 
         assertThat(result.outcome()).isEqualTo(ReservationResult.Outcome.RESERVED);
         assertThat(result.fenceToken()).isPresent();
@@ -62,7 +72,7 @@ public abstract class IdempotencyStoreContractTest {
     @Test
     void findReturnsTheInProgressRecordBeforeCompletion() {
         EffectiveKey key = key("k2");
-        store.reserve(key, "fp", TTL);
+        store.reserve(key, "fp", STABLE_TTL);
 
         IdempotencyRecord record = store.find(key).orElseThrow();
 
@@ -73,9 +83,9 @@ public abstract class IdempotencyStoreContractTest {
     @Test
     void aRepeatReservationOfAnInProgressKeyReturnsTheExistingRecord() {
         EffectiveKey key = key("k3");
-        store.reserve(key, "fp", TTL);
+        store.reserve(key, "fp", STABLE_TTL);
 
-        ReservationResult repeat = store.reserve(key, "fp", TTL);
+        ReservationResult repeat = store.reserve(key, "fp", STABLE_TTL);
 
         assertThat(repeat.outcome()).isEqualTo(ReservationResult.Outcome.EXISTS);
         assertThat(repeat.existing().orElseThrow().state()).isEqualTo(RecordState.IN_PROGRESS);
@@ -84,13 +94,13 @@ public abstract class IdempotencyStoreContractTest {
     @Test
     void aCompletedRecordIsRetrievableViaFindAndViaARepeatReservation() {
         EffectiveKey key = key("k4");
-        String fenceToken = store.reserve(key, "fp", TTL).fenceToken().orElseThrow();
+        String fenceToken = store.reserve(key, "fp", STABLE_TTL).fenceToken().orElseThrow();
         CachedResponse response = new CachedResponse(201, Map.of(), "{\"id\":1}".getBytes());
 
-        store.complete(key, fenceToken, response, TTL);
+        store.complete(key, fenceToken, response, STABLE_TTL);
 
         assertThat(store.find(key).orElseThrow().response()).isEqualTo(response);
-        ReservationResult repeat = store.reserve(key, "fp", TTL);
+        ReservationResult repeat = store.reserve(key, "fp", STABLE_TTL);
         assertThat(repeat.outcome()).isEqualTo(ReservationResult.Outcome.EXISTS);
         assertThat(repeat.existing().orElseThrow().response()).isEqualTo(response);
     }
@@ -98,19 +108,19 @@ public abstract class IdempotencyStoreContractTest {
     @Test
     void releaseFreesTheKeyForAFreshReservation() {
         EffectiveKey key = key("k5");
-        String fenceToken = store.reserve(key, "fp", TTL).fenceToken().orElseThrow();
+        String fenceToken = store.reserve(key, "fp", STABLE_TTL).fenceToken().orElseThrow();
 
         store.release(key, fenceToken);
 
-        assertThat(store.reserve(key, "fp", TTL).outcome()).isEqualTo(ReservationResult.Outcome.RESERVED);
+        assertThat(store.reserve(key, "fp", STABLE_TTL).outcome()).isEqualTo(ReservationResult.Outcome.RESERVED);
     }
 
     @Test
     void theFingerprintCapturedAtReserveIsRetainedThroughComplete() {
         EffectiveKey key = key("k6");
-        String fenceToken = store.reserve(key, "distinctive-fp", TTL).fenceToken().orElseThrow();
+        String fenceToken = store.reserve(key, "distinctive-fp", STABLE_TTL).fenceToken().orElseThrow();
 
-        store.complete(key, fenceToken, new CachedResponse(201, Map.of(), "{}".getBytes()), TTL);
+        store.complete(key, fenceToken, new CachedResponse(201, Map.of(), "{}".getBytes()), STABLE_TTL);
 
         assertThat(store.find(key).orElseThrow().fingerprint()).isEqualTo("distinctive-fp");
     }
@@ -120,22 +130,20 @@ public abstract class IdempotencyStoreContractTest {
         EffectiveKey key = key("k7");
         store.reserve(key, "fp", TTL);
 
-        Thread.sleep(PAST_TTL_SLEEP.toMillis());
+        awaitExpiry(key);
 
-        assertThat(store.find(key)).isEmpty();
-        assertThat(store.reserve(key, "fp", TTL).outcome()).isEqualTo(ReservationResult.Outcome.RESERVED);
+        assertThat(store.reserve(key, "fp", STABLE_TTL).outcome()).isEqualTo(ReservationResult.Outcome.RESERVED);
     }
 
     @Test
     void aCompletedRecordPastItsResponseTtlIsTreatedAsAbsent() throws InterruptedException {
         EffectiveKey key = key("k8");
-        String fenceToken = store.reserve(key, "fp", TTL).fenceToken().orElseThrow();
+        String fenceToken = store.reserve(key, "fp", STABLE_TTL).fenceToken().orElseThrow();
         store.complete(key, fenceToken, new CachedResponse(201, Map.of(), "{}".getBytes()), TTL);
 
-        Thread.sleep(PAST_TTL_SLEEP.toMillis());
+        awaitExpiry(key);
 
-        assertThat(store.find(key)).isEmpty();
-        assertThat(store.reserve(key, "fp", TTL).outcome()).isEqualTo(ReservationResult.Outcome.RESERVED);
+        assertThat(store.reserve(key, "fp", STABLE_TTL).outcome()).isEqualTo(ReservationResult.Outcome.RESERVED);
     }
 
     @Test
@@ -143,11 +151,12 @@ public abstract class IdempotencyStoreContractTest {
         EffectiveKey key = key("k9");
         String staleToken = store.reserve(key, "fp", TTL).fenceToken().orElseThrow();
 
-        Thread.sleep(PAST_TTL_SLEEP.toMillis());
-        store.reserve(key, "fp", TTL); // a fresh caller supersedes the expired reservation
+        awaitExpiry(key);
+        // a fresh caller supersedes the expired reservation
+        assertThat(store.reserve(key, "fp", STABLE_TTL).outcome()).isEqualTo(ReservationResult.Outcome.RESERVED);
 
         CachedResponse staleResponse = new CachedResponse(201, Map.of(), "{\"id\":\"stale\"}".getBytes());
-        store.complete(key, staleToken, staleResponse, TTL);
+        store.complete(key, staleToken, staleResponse, STABLE_TTL);
 
         assertThat(store.find(key).orElseThrow().state()).isEqualTo(RecordState.IN_PROGRESS);
     }
@@ -157,12 +166,29 @@ public abstract class IdempotencyStoreContractTest {
         EffectiveKey key = key("k10");
         String staleToken = store.reserve(key, "fp", TTL).fenceToken().orElseThrow();
 
-        Thread.sleep(PAST_TTL_SLEEP.toMillis());
-        store.reserve(key, "fp", TTL); // a fresh caller supersedes the expired reservation
+        awaitExpiry(key);
+        // a fresh caller supersedes the expired reservation
+        assertThat(store.reserve(key, "fp", STABLE_TTL).outcome()).isEqualTo(ReservationResult.Outcome.RESERVED);
 
         store.release(key, staleToken);
 
         assertThat(store.find(key).orElseThrow().state()).isEqualTo(RecordState.IN_PROGRESS);
+    }
+
+    /**
+     * Blocks until the store itself reports {@code key} absent - i.e. until
+     * its own clock says the TTL has passed - failing only if that hasn't
+     * happened by a generous deadline measured on the monotonic clock. Uses
+     * {@code find} (read-only) so polling can't disturb the record under test.
+     */
+    private void awaitExpiry(EffectiveKey key) throws InterruptedException {
+        long deadline = System.nanoTime() + EXPIRY_DEADLINE.toNanos();
+        while (store.find(key).isPresent()) {
+            if (System.nanoTime() - deadline > 0) {
+                fail("%s still present %s after it should have expired", key, EXPIRY_DEADLINE);
+            }
+            Thread.sleep(EXPIRY_POLL_INTERVAL.toMillis());
+        }
     }
 
     /**
