@@ -229,7 +229,7 @@ narrow correctness fallback, and is a transport-conditional exception to
 - `blocks-idempotency-core/src/main/java/io/adzubla/blocks/idempotency/key/EffectiveKeyFactory.java` — the transport-neutral construction seam to reuse
 - `blocks-idempotency-web/src/main/java/io/adzubla/blocks/idempotency/web/IdempotencyInterceptor.java` — reference for the AOP advice this becomes
 - `blocks-idempotency-web/src/main/java/io/adzubla/blocks/idempotency/web/config/IdempotencyWebAutoConfiguration.java` — reference for the wiring pattern (auto-configuration ordering) a messaging adapter should replicate
-- `blocks-idempotency-store-postgres/src/main/resources/db/migration/V1__idempotency_record.sql` — already generalized (Slice 034), no further schema change expected for Kafka
+- `blocks-idempotency-store-postgres/src/main/resources/META-INF/blocks-idempotency/postgres/V1__idempotency_record.sql` — already generalized (Slice 034), no further schema change expected for Kafka
 
 ## Verification (once a phase is picked up)
 

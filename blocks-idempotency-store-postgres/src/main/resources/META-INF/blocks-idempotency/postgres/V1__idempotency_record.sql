@@ -1,3 +1,11 @@
+-- blocks-idempotency-store-postgres: schema of the idempotency record table.
+--
+-- NOT run automatically. Copy this into your own migration tool under a version of
+-- your own choosing (for example Flyway "V12__idempotency_record.sql", or a Liquibase
+-- changeset), so it fits your numbering and history. The library doesn't ship it on
+-- Flyway's default "db/migration" location on purpose: a library-owned "V1" would
+-- collide with the application's own migrations.
+
 -- Idempotency record for PostgresIdempotencyStore (ADR 0001, ADR 0003).
 -- The composite PRIMARY KEY provides the atomic reservation; the reservation
 -- write runs inside the effect's own transaction and IS the lock (left open by

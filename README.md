@@ -770,11 +770,42 @@ configurable lock timeout, rather than polling. That timeout applies only to
 the reservation itself: once the key is reserved, the handler's own
 statements run with whatever `lock_timeout` the connection normally has.
 
-Requires `spring-boot-starter-jdbc`, a `DataSource`/
-`PlatformTransactionManager`, and the store's own table. A Flyway migration
-ships with the module as an optional dependency — let Flyway auto-run it, or
-apply it with your own migration tool. A built-in scheduled job sweeps
-expired rows, since Postgres itself has no native TTL.
+Requires `spring-boot-starter-jdbc`, a `DataSource`/`PlatformTransactionManager`,
+and the `idempotency_record` table, which **you create** (see below). A built-in
+scheduled job sweeps expired rows, since Postgres itself has no native TTL.
+
+**Creating the table.** The library does not run any migration itself. Add the
+table to your own migrations, under whatever version your migration tool needs.
+(It does not ship a Flyway script on Flyway's default `db/migration` location on
+purpose: a library-owned `V1` would collide with your own `V1`, or fail
+validation against your existing history.) The same script is in the jar at
+`META-INF/blocks-idempotency/postgres/V1__idempotency_record.sql`, with comments
+explaining each column. Copy it, for example, as `V12__idempotency_record.sql`
+for Flyway, or into a Liquibase changeset or a plain SQL file:
+
+```sql
+CREATE TABLE idempotency_record (
+    route             VARCHAR(512) NOT NULL,
+    handler           VARCHAR(255) NOT NULL,
+    principal         VARCHAR(255) NOT NULL DEFAULT '',
+    idempotency_key   VARCHAR(255) NOT NULL,
+    fingerprint       VARCHAR(64)  NOT NULL,
+    reservation_token VARCHAR(36)  NOT NULL,
+    response_status   SMALLINT,
+    response_headers  JSONB,
+    response_body     BYTEA,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    expires_at        TIMESTAMPTZ  NOT NULL,
+    PRIMARY KEY (route, handler, principal, idempotency_key)
+);
+
+CREATE INDEX ix_idempotency_expires_at ON idempotency_record (expires_at);
+```
+
+When you upgrade the library, check the release notes for schema changes and
+add them as new migrations of your own. Without the table, the first idempotent
+request on the Postgres store fails with `relation "idempotency_record" does not
+exist`.
 
 ```properties
 # upper bound a waiter blocks on the reservation row's native lock before giving up
@@ -1149,6 +1180,7 @@ specific problem, or confirm that your keys aren't sensitive.
 | `409 response_unavailable` | The response was over `idempotency.max-body-size`. Not retryable. |
 | `409 in_progress` that never clears | The first request is still running, or it crashed. The key frees itself once `lock-ttl` expires. |
 | `400 key_invalid` | The key is longer than `idempotency.key.max-length` or contains characters outside `[A-Za-z0-9_.:-]`. |
+| `relation "idempotency_record" does not exist` on the Postgres store | The table was never created. Add it to your migrations ([6.4](#64-postgres)). |
 | Handler ran twice on Redis | `lock-ttl` is shorter than the handler, or Redis lost the key. Look for the `completion no-op` `WARN`. |
 | `500` after a successful handler on Postgres | The commit failed and the effect was rolled back. A retry re-executes ([6.4](#64-postgres)). |
 | Messages requeued in a tight loop (RabbitMQ), or dropped after a few quick retries (Kafka default error handler) | A delivery whose key is still in progress has no retry backoff longer than `lock-ttl` ([5.5](#55-shared-messaging-behavior)). |

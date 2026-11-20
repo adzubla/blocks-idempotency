@@ -3,7 +3,6 @@ package io.adzubla.blocks.idempotency.store.postgres;
 import com.zaxxer.hikari.HikariDataSource;
 import io.adzubla.blocks.idempotency.store.IdempotencyStore;
 import io.adzubla.blocks.idempotency.store.IdempotencyStoreContractTest;
-import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -49,7 +48,7 @@ class PostgresIdempotencyStoreContractTest extends IdempotencyStoreContractTest 
         dataSource.setPassword(POSTGRES.getPassword());
         transactionManager = new DataSourceTransactionManager(dataSource);
 
-        Flyway.configure().dataSource(dataSource).load().migrate();
+        PostgresTestSchema.migrate(dataSource);
     }
 
     @AfterAll

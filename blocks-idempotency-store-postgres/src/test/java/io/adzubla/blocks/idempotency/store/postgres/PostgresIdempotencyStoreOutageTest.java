@@ -6,7 +6,6 @@ import io.adzubla.blocks.idempotency.model.EffectiveKey;
 import io.adzubla.blocks.idempotency.model.ReservationResult;
 import io.adzubla.blocks.idempotency.store.EffectRolledBackException;
 import io.adzubla.blocks.idempotency.store.StoreUnavailableException;
-import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -119,7 +118,7 @@ class PostgresIdempotencyStoreOutageTest {
         dataSource.setConnectionTimeout(2000);
         dataSource.setValidationTimeout(2000);
         dataSource.setMaximumPoolSize(4);
-        Flyway.configure().dataSource(dataSource).load().migrate();
+        PostgresTestSchema.migrate(dataSource);
 
         DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
         PostgresIdempotencyStore store = new PostgresIdempotencyStore(

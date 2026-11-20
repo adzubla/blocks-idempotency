@@ -8,7 +8,6 @@ import io.adzubla.blocks.idempotency.engine.IdempotencyEngine;
 import io.adzubla.blocks.idempotency.engine.RejectReason;
 import io.adzubla.blocks.idempotency.model.CachedResponse;
 import io.adzubla.blocks.idempotency.model.EffectiveKey;
-import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -77,7 +76,7 @@ class PostgresIdempotencyWaitModeTest {
         dataSource.setMaximumPoolSize(4);
         transactionManager = new DataSourceTransactionManager(dataSource);
 
-        Flyway.configure().dataSource(dataSource).load().migrate();
+        PostgresTestSchema.migrate(dataSource);
     }
 
     @AfterAll

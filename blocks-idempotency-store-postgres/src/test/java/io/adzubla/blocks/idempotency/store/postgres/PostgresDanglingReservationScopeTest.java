@@ -4,7 +4,6 @@ import com.zaxxer.hikari.HikariDataSource;
 import io.adzubla.blocks.idempotency.model.CachedResponse;
 import io.adzubla.blocks.idempotency.model.EffectiveKey;
 import io.adzubla.blocks.idempotency.model.ReservationResult;
-import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -52,7 +51,7 @@ class PostgresDanglingReservationScopeTest {
         dataSource.setPassword(POSTGRES.getPassword());
         transactionManager = new DataSourceTransactionManager(dataSource);
 
-        Flyway.configure().dataSource(dataSource).load().migrate();
+        PostgresTestSchema.migrate(dataSource);
     }
 
     @AfterAll

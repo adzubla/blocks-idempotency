@@ -5,7 +5,6 @@ import io.adzubla.blocks.idempotency.model.CachedResponse;
 import io.adzubla.blocks.idempotency.model.EffectiveKey;
 import io.adzubla.blocks.idempotency.model.RecordState;
 import io.adzubla.blocks.idempotency.model.ReservationResult;
-import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -66,7 +65,7 @@ class PostgresNativeConcurrencyTest {
         dataSource.setMaximumPoolSize(4);
         transactionManager = new DataSourceTransactionManager(dataSource);
 
-        Flyway.configure().dataSource(dataSource).load().migrate();
+        PostgresTestSchema.migrate(dataSource);
     }
 
     @AfterAll

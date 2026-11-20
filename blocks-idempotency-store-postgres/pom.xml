@@ -47,24 +47,25 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Optional: the consumer may manage the schema themselves -->
+        <!-- Tests only: they apply the shipped schema script through Flyway. The library itself
+             doesn't use Flyway; the application applies the script with its own migration tool. -->
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>
-            <optional>true</optional>
+            <scope>test</scope>
         </dependency>
         <!-- Flyway 10+ split PostgreSQL support out of flyway-core -->
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-database-postgresql</artifactId>
-            <optional>true</optional>
+            <scope>test</scope>
         </dependency>
         <!-- Spring Boot 4.0's per-tech autoconfigure split moved Flyway's
              auto-migration-on-startup support out of spring-boot-autoconfigure -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-flyway</artifactId>
-            <optional>true</optional>
+            <scope>test</scope>
         </dependency>
 
         <dependency>
