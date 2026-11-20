@@ -22,10 +22,14 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -181,6 +185,7 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
 
     @Override
     public ReservationResult reserve(EffectiveKey key, String fingerprint, Duration lockTtl) {
+        abandonLeakedScope(key);
         TransactionStatus status;
         try {
             status = transactionManager.getTransaction(new DefaultTransactionDefinition());
@@ -197,7 +202,7 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
                     // The handler runs in this same transaction from here on -
                     // hand it back the lock_timeout it would have had.
                     jdbc.queryForObject(SET_LOCK_TIMEOUT, String.class, callerLockTimeout);
-                    bindScope(status, fenceToken);
+                    bindScope(status, key, fenceToken);
                     return ReservationResult.reserved(fenceToken);
                 }
 
@@ -439,17 +444,83 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
      * same-thread self-supersede case) must not replace the outer status with
      * its own merely-participating one - only the token moves.
      */
-    private void bindScope(TransactionStatus status, String fenceToken) {
+    private void bindScope(TransactionStatus status, EffectiveKey key, String fenceToken) {
         ReservationScope existing = scope.get();
-        scope.set(existing == null ? new ReservationScope(status, fenceToken) : new ReservationScope(existing.status(), fenceToken));
+        scope.set(existing == null ? new ReservationScope(status, key, fenceToken) : new ReservationScope(existing.status(), key, fenceToken));
+    }
+
+    /**
+     * Rolls back a reservation for a <em>different</em> key still bound to this
+     * thread when a new {@code reserve()} begins (issue 033). In the supported
+     * synchronous model {@code complete()}/{@code release()} always resolve a
+     * reservation before its thread serves anything else, so a leftover scope
+     * for another key means one was never resolved - an async or thread-hopping
+     * handler, or a path where the interceptor never ran. Joining it would let
+     * this reservation's {@code complete()} commit the leaked one as a side
+     * effect, leaving a committed {@code IN_PROGRESS} row that blocks genuine
+     * retries until it expires. Rolling it back instead frees its key, returns
+     * its connection to the pool, and starts this reservation in a fresh
+     * transaction.
+     *
+     * <p>A leftover scope for the <em>same</em> key is left alone: that is the
+     * nested same-thread re-reservation the shared contract suite exercises
+     * (a repeat reservation, or superseding one's own expired reservation).
+     */
+    private void abandonLeakedScope(EffectiveKey key) {
+        ReservationScope leaked = scope.get();
+        if (leaked == null || leaked.key().equals(key)) {
+            return;
+        }
+        log.warn("Rolling back an unresolved Postgres idempotency reservation left on this thread for {} "
+                + "(complete/release never ran - is an async handler or a custom caller using this store?)", leaked.key());
+        scope.remove();
+        safeRollback(leaked.status());
     }
 
     private Optional<IdempotencyRecord> findRecord(EffectiveKey key) {
         return jdbc.query(SELECT_RECORD, this::mapRecord, keyArgs(key)).stream().findFirst();
     }
 
+    /** Column sizes of the effective-key columns in {@code V1__idempotency_record.sql}. */
+    private static final int ROUTE_COLUMN_LENGTH = 512;
+    private static final int HANDLER_COLUMN_LENGTH = 255;
+    private static final int PRINCIPAL_COLUMN_LENGTH = 255;
+    private static final int KEY_COLUMN_LENGTH = 255;
+
+    /** Marks a stored component as a digest of the real, over-long value. */
+    private static final String DIGEST_PREFIX = "sha256:";
+
     private static Object[] keyArgs(EffectiveKey key) {
-        return new Object[] {key.route(), key.handler(), key.principal(), key.value()};
+        return new Object[] {
+                fitColumn(key.route(), ROUTE_COLUMN_LENGTH),
+                fitColumn(key.handler(), HANDLER_COLUMN_LENGTH),
+                fitColumn(key.principal(), PRINCIPAL_COLUMN_LENGTH),
+                fitColumn(key.value(), KEY_COLUMN_LENGTH)};
+    }
+
+    /**
+     * Stores a key component verbatim when it fits its column, and otherwise as
+     * {@code sha256:<hex>} of its UTF-8 bytes (71 characters, which fits every
+     * key column) - issue 061. The route (request URI), principal (a token
+     * claim) and listener id are unbounded, and {@code idempotency.key.max-length}
+     * may exceed 255; inserting such a value verbatim fails with SQLState 22001,
+     * a raw 500 that bypasses {@code onStoreFailure}. The mapping is
+     * deterministic, so reserve/find/complete/await all address the same row,
+     * and a value that fits is stored exactly as before, so existing rows are
+     * unaffected and no migration is needed. Lengths are counted in code
+     * points, the unit {@code VARCHAR(n)} limits. A verbatim value can't
+     * collide with a digest without a SHA-256 preimage.
+     */
+    static String fitColumn(String value, int columnLength) {
+        if (value.codePointCount(0, value.length()) <= columnLength) {
+            return value;
+        }
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
+            return DIGEST_PREFIX + HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
     }
 
     private static Object[] concat(Object[]... parts) {
@@ -501,6 +572,6 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
         }
     }
 
-    private record ReservationScope(TransactionStatus status, String fenceToken) {
+    private record ReservationScope(TransactionStatus status, EffectiveKey key, String fenceToken) {
     }
 }

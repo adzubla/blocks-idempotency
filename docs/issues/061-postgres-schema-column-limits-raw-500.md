@@ -1,7 +1,7 @@
 # Slice 061 — Postgres column limits narrower than accepted input → raw 500
 
 > Source: system analysis (2026-11-19) · Type: AFK
-> Status: needs-triage
+> Status: ready-for-agent
 
 ## What to build
 
@@ -32,10 +32,24 @@ Candidate fixes, for triage:
 
 ## Acceptance criteria
 
-- [ ] A key at the configured `max-length` always inserts, or startup rejects the configuration.
-- [ ] An over-long route or principal never yields a raw 500.
-- [ ] Migration provided if the schema changes.
+- [x] A key at the configured `max-length` always inserts, or startup rejects the configuration.
+- [x] An over-long route or principal never yields a raw 500.
+- [x] Migration provided if the schema changes. (No schema change.)
 
 ## Blocked by
 
 —
+
+## Comments
+
+- 2026-11-20 — Implemented the digest option without a schema change. The
+  store's `keyArgs` passes each key component (route, handler, principal,
+  value) through `fitColumn`. A value that fits its column, counted in code
+  points as `VARCHAR(n)` counts, is stored verbatim. A longer one is stored as
+  `sha256:<hex>` of its UTF-8 bytes (71 characters). Values that fit are
+  unchanged, so existing rows still match and no migration is needed. The
+  mapping is deterministic, so reserve/find/complete/await all address the
+  same row. A verbatim value can't collide with a digest without a SHA-256
+  preimage. Covered by `PostgresColumnLimitsTest`: over-long components
+  round-trip, long values sharing a prefix stay distinct, and values exactly at
+  the limit (including a supplementary character) are stored verbatim.

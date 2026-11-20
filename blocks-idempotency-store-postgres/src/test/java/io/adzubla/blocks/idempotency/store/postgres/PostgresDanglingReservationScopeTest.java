@@ -3,14 +3,15 @@ package io.adzubla.blocks.idempotency.store.postgres;
 import com.zaxxer.hikari.HikariDataSource;
 import io.adzubla.blocks.idempotency.model.CachedResponse;
 import io.adzubla.blocks.idempotency.model.EffectiveKey;
+import io.adzubla.blocks.idempotency.model.ReservationResult;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -22,27 +23,15 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Documents a robustness gap
- * (docs/issues/033-postgres-dangling-reservation-scope.md): the winning
- * {@code reserve()} leaves its transaction open and thread-bound via a
- * {@code ThreadLocal} reservation scope, relying on {@code complete()}/{@code
- * release()} to resolve it. If a reservation is ever left unresolved on a
- * pooled thread (a thread-hopping/async handler - explicitly "not yet
- * supported", or an interceptor that never ran), the stale scope survives onto
- * the next request that reuses the thread.
- *
- * <p>This test drives that state directly at the store level: reserve key A and
- * leave it dangling, then - simulating the reused thread handling a fresh
- * request - reserve a different key B and complete B. Because B's
- * {@code reserve} joins A's still-open transaction and {@code bindScope} keeps
- * the outer transaction, completing B commits A's dangling reservation as a
- * side effect: A leaks as a committed {@code IN_PROGRESS} row that will block
- * genuine retries until it expires, even though A's request was never resolved.
- *
- * <p>The trigger (unresolved reservation surviving a thread) is currently
- * out-of-contract (ADR 0003: async not supported), so this is filed as
- * defense-in-depth hardening, not a bug in the supported synchronous model.
- * {@code @Disabled}; enabling it fails, demonstrating the leak.
+ * docs/issues/033-postgres-dangling-reservation-scope.md: the winning
+ * {@code reserve()} leaves its transaction open and thread-bound, relying on
+ * {@code complete()}/{@code release()} to resolve it. If a reservation is ever
+ * left unresolved on a pooled thread (an async/thread-hopping handler, or a
+ * path where the interceptor never ran), the next {@code reserve()} for a
+ * different key on that thread must not join it - otherwise completing the
+ * fresh reservation would commit the dangling one as a side effect, leaking a
+ * committed {@code IN_PROGRESS} row that blocks genuine retries until it
+ * expires. The store rolls the dangling reservation back instead.
  */
 @Testcontainers
 class PostgresDanglingReservationScopeTest {
@@ -78,7 +67,6 @@ class PostgresDanglingReservationScopeTest {
     }
 
     @Test
-    @Disabled("Documents robustness gap: docs/issues/033-postgres-dangling-reservation-scope.md; remove @Disabled to reproduce")
     void completingAFreshReservationDoesNotCommitADanglingOneLeftOnTheSameThread() {
         store = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, new ObjectMapper(), Duration.ofSeconds(2));
         EffectiveKey dangling = new EffectiveKey("/orders", "POST", "", "dangling-A");
@@ -93,5 +81,38 @@ class PostgresDanglingReservationScopeTest {
 
         // A was never resolved, so it must not have leaked as a committed reservation.
         assertThat(store.find(dangling)).isEmpty();
+        assertThat(store.find(fresh).orElseThrow().isCompleted()).isTrue();
+        // ...and neither transaction is still bound to the (pooled) thread.
+        assertThat(TransactionSynchronizationManager.getResourceMap()).isEmpty();
+    }
+
+    @Test
+    void aDanglingReservationsKeyIsFreeForAFreshReservationAfterwards() {
+        store = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, new ObjectMapper(), Duration.ofSeconds(2));
+        EffectiveKey dangling = new EffectiveKey("/orders", "POST", "", "dangling-C");
+        EffectiveKey fresh = new EffectiveKey("/invoices", "POST", "", "fresh-D");
+
+        store.reserve(dangling, "fpC", Duration.ofSeconds(30));
+        String tokenD = store.reserve(fresh, "fpD", Duration.ofSeconds(30)).fenceToken().orElseThrow();
+        store.release(fresh, tokenD);
+
+        // A genuine retry of C is not blocked by the abandoned reservation.
+        assertThat(store.reserve(dangling, "fpC", Duration.ofSeconds(30)).outcome())
+                .isEqualTo(ReservationResult.Outcome.RESERVED);
+    }
+
+    @Test
+    void aNestedReservationOfTheSameKeyStillJoinsTheOpenOne() {
+        store = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, new ObjectMapper(), Duration.ofSeconds(2));
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "same-E");
+        String token = store.reserve(key, "fpE", Duration.ofSeconds(30)).fenceToken().orElseThrow();
+
+        // Same key on the same thread is not treated as a leak: it sees its own in-progress record...
+        assertThat(store.reserve(key, "fpE", Duration.ofSeconds(30)).outcome())
+                .isEqualTo(ReservationResult.Outcome.EXISTS);
+
+        // ...and the original reservation is still the one that completes.
+        store.complete(key, token, new CachedResponse(201, Map.of(), "{}".getBytes()), Duration.ofHours(24));
+        assertThat(store.find(key).orElseThrow().isCompleted()).isTrue();
     }
 }

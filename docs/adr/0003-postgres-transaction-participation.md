@@ -188,3 +188,11 @@ capture.
   (`Callable`, `WebAsyncTask`, `DeferredResult`, `CompletionStage`,
   `ResponseBodyEmitter`/`SseEmitter`, `StreamingResponseBody`, reactive types,
   including when wrapped in `ResponseEntity`) on such a store.
+- **A leaked reservation is rolled back, not joined (2026-11-20, issue 033).** If a
+  reservation is ever left unresolved on a pooled thread anyway, a later `reserve()`
+  for a *different* key on that thread would join its still-open transaction, and
+  completing the new reservation would commit the leaked one. The thread-local
+  scope now records its key; `reserve()` rolls back a leftover scope for another
+  key (logging `WARN`) before opening its own transaction. A leftover scope for the
+  *same* key is still joined - the nested same-thread re-reservation the contract
+  suite relies on.

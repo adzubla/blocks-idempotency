@@ -820,7 +820,16 @@ for such a handler on the Postgres store, naming the handler and its return
 type. Use a synchronous handler with the Postgres store. The same thread-bound assumption extends to message
 listeners — it works as long as the listener processes each delivery
 synchronously on a single thread, which is the default for
-`@KafkaListener`/`@RabbitListener`/`@JmsListener`.
+`@KafkaListener`/`@RabbitListener`/`@JmsListener`. As a safety net, if a
+reservation is ever left unresolved on a thread anyway, the next reservation
+for a different key on that thread rolls it back (logged at `WARN`) instead of
+joining its transaction.
+
+**Long key components.** The schema's key columns are `VARCHAR(512)` for the
+route and `VARCHAR(255)` for the handler, principal and key value. A component
+longer than its column (a long request URI, a long principal claim, a
+`key.max-length` above 255) is stored as `sha256:<hex>` of its value instead,
+so it still works; values that fit are stored verbatim.
 
 ### 6.5 Choosing a store
 

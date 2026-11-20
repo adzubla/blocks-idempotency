@@ -1,7 +1,7 @@
 # Slice 033 — Harden against a dangling Postgres reservation scope surviving thread reuse
 
 > Source: bug hunt (2026-07-17) · Type: AFK
-> Status: needs-triage
+> Status: ready-for-agent
 
 ## What to build
 
@@ -43,11 +43,11 @@ deferred. Candidate hardening (for triage):
       (`@Disabled`, `@Testcontainers`, uses the `abandonDanglingReservationForTests`
       seam for cleanup). Removing `@Disabled` fails today because the dangling
       key leaks as a committed reservation.
-- [ ] A reservation left unresolved on a reused thread cannot be committed by a
+- [x] A reservation left unresolved on a reused thread cannot be committed by a
       later, unrelated reservation on that thread.
-- [ ] No stale `ThreadLocal` scope or open transaction bleeds across requests on
+- [x] No stale `ThreadLocal` scope or open transaction bleeds across requests on
       a pooled thread.
-- [ ] The intended same-request self-supersede behavior (contract test) still
+- [x] The intended same-request self-supersede behavior (contract test) still
       passes.
 
 ## Blocked by
@@ -60,3 +60,16 @@ deferred. Candidate hardening (for triage):
   as **defense-in-depth hardening**, not a bug in the supported synchronous
   model — the trigger (unresolved reservation surviving a thread) is currently
   out-of-contract (async handling, ADR 0003). Filed **unfixed by request**.
+- 2026-11-20 — Implemented the first candidate. `ReservationScope` now records
+  its `EffectiveKey`. At entry, `reserve()` rolls back a leftover scope for a
+  *different* key, logs a `WARN` and clears the `ThreadLocal`, then opens a
+  fresh transaction. That frees the leaked key, returns its connection, and
+  stops the new reservation's `complete()` from committing it. A leftover scope
+  for the *same* key is still joined, because that is the contract suite's
+  nested re-reservation. `PostgresDanglingReservationScopeTest` is no longer
+  `@Disabled`. It also asserts that no transaction resource stays bound to the
+  thread, that the leaked key can be reserved again, and that same-key
+  nesting still behaves as before. Remaining gap: a leaked scope is only
+  reclaimed by the next `reserve()` on that thread, so non-idempotent work that
+  runs there first still joins it. Since 064, async handlers on Postgres are
+  rejected at startup, so the trigger is out of contract.
