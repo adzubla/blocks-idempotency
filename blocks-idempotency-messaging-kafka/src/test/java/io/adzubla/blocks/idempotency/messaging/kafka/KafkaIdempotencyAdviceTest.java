@@ -5,6 +5,7 @@ import io.adzubla.blocks.idempotency.annotation.Idempotent.OnStoreFailure;
 import io.adzubla.blocks.idempotency.config.IdempotencyProperties;
 import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
 import io.adzubla.blocks.idempotency.fingerprint.Fingerprint;
+import io.adzubla.blocks.idempotency.messaging.core.DeliveryInProgressException;
 import io.adzubla.blocks.idempotency.messaging.core.MessagingEffectiveKeyFactory;
 import io.adzubla.blocks.idempotency.metrics.NoOpIdempotencyMetrics;
 import io.adzubla.blocks.idempotency.model.EffectiveKey;
@@ -133,7 +134,7 @@ class KafkaIdempotencyAdviceTest {
     }
 
     @Test
-    void concurrentDuplicateDeliveryOfTheSameKeyIsAckedWithoutInvokingTheListener() throws Throwable {
+    void concurrentDuplicateDeliveryOfTheSameKeyIsFailedForRedeliveryWithoutInvokingTheListener() throws Throwable {
         String idempotencyKey = "key-race";
         String body = "{\"amount\":10}";
         CountDownLatch primaryStarted = new CountDownLatch(1);
@@ -152,9 +153,10 @@ class KafkaIdempotencyAdviceTest {
             assertThat(primaryStarted.await(5, TimeUnit.SECONDS)).isTrue();
 
             // The primary is still mid-processing (reserved, not yet completed) - a concurrent
-            // duplicate delivery of the same key finds it IN_PROGRESS.
-            Object duplicateResult = advice.aroundIdempotentListener(joinPointFor(idempotencyKey, body));
-            assertThat(duplicateResult).isNull();
+            // duplicate delivery of the same key finds it IN_PROGRESS and is failed (not acked) so
+            // the broker redelivers it - a plain retryable failure, never a reject-without-requeue.
+            assertThatThrownBy(() -> advice.aroundIdempotentListener(joinPointFor(idempotencyKey, body)))
+                    .isExactlyInstanceOf(DeliveryInProgressException.class);
             assertThat(invocations.get()).isZero();
         } finally {
             // Unconditional even if an assertion above threw, so the primary thread never

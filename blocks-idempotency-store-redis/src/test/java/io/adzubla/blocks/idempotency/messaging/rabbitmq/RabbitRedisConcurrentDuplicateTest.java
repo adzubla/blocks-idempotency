@@ -5,6 +5,7 @@ import io.adzubla.blocks.idempotency.annotation.Idempotent;
 import io.adzubla.blocks.idempotency.config.IdempotencyProperties;
 import io.adzubla.blocks.idempotency.engine.IdempotencyEngineRegistry;
 import io.adzubla.blocks.idempotency.fingerprint.Fingerprint;
+import io.adzubla.blocks.idempotency.messaging.core.DeliveryInProgressException;
 import io.adzubla.blocks.idempotency.messaging.core.MessagingEffectiveKeyFactory;
 import io.adzubla.blocks.idempotency.metrics.NoOpIdempotencyMetrics;
 import io.adzubla.blocks.idempotency.model.EffectiveKey;
@@ -33,6 +34,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -69,7 +71,7 @@ class RabbitRedisConcurrentDuplicateTest {
     }
 
     @Test
-    void concurrentDuplicateDeliveryOfTheSameKeyIsAckedWithoutInvokingTheListener() throws Throwable {
+    void concurrentDuplicateDeliveryOfTheSameKeyIsFailedForRedeliveryWithoutInvokingTheListener() throws Throwable {
         StringRedisTemplate redisTemplate = new StringRedisTemplate(connectionFactory);
         redisTemplate.afterPropertiesSet();
         RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, new ObjectMapper(), "idempotency-rabbitmq-race-test:");
@@ -99,8 +101,9 @@ class RabbitRedisConcurrentDuplicateTest {
         try {
             assertThat(primaryStarted.await(10, TimeUnit.SECONDS)).isTrue();
 
-            Object duplicateResult = advice.aroundIdempotentListener(joinPointFor(idempotencyKey, body, invocations));
-            assertThat(duplicateResult).isNull();
+            // The duplicate finds the key IN_PROGRESS and is failed for broker redelivery, not acked.
+            assertThatThrownBy(() -> advice.aroundIdempotentListener(joinPointFor(idempotencyKey, body, invocations)))
+                    .isExactlyInstanceOf(DeliveryInProgressException.class);
             assertThat(invocations.get()).isZero();
         } finally {
             releasePrimary.countDown();

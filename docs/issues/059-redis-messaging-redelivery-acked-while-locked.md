@@ -1,7 +1,7 @@
 # Slice 059 — Redis + messaging: the primary's own redelivery is ack-and-skipped while its stale lock lives
 
 > Source: system analysis (2026-11-19) · Type: AFK
-> Status: needs-triage
+> Status: ready-for-agent
 
 ## What to build
 
@@ -41,13 +41,30 @@ Candidate fixes, for triage:
 
 ## Acceptance criteria
 
-- [ ] A disabled repro exists for the release-blip path (Redis down during
-      `release`, then an immediate redelivery is acked without invoking the listener).
-- [ ] Triage decision recorded (nack-on-in-progress, rethrow-on-release-failure,
-      document-only), with ADR 0005 amended if its trade-off changes.
-- [ ] Whatever is chosen, a redelivery after a failed primary is never silently
-      acked while the stale lock is live, or the limitation is documented in the README.
+- [x] A repro exists for the release-blip path (store down during `release`, then
+      an immediate redelivery): `AbstractMessagingIdempotencyAdviceTest.redeliveryAfterAFailedPrimaryWhoseReleaseCouldNotReachTheStoreIsNotAcked`.
+      It's a live regression test rather than a disabled one, since the fix landed in the same change.
+- [x] Triage decision recorded: **nack all `IN_PROGRESS` deliveries** (see Comments); ADR 0005 amended,
+      PRD §5 table updated.
+- [x] A redelivery after a failed primary is never silently acked while the stale lock is live:
+      covered at the core advice seam, each broker's advice unit test, and a real-broker
+      end-to-end test per transport (`deliveryOfAKeyHeldByAStaleLockIsRedeliveredUntilTheLockClearsInsteadOfBeingAcked`).
 
 ## Blocked by
 
 —
+
+## Comments
+
+- 2026-11-19 — Triage: chose **nack all `IN_PROGRESS`** over nacking only
+  broker-flagged redeliveries (Kafka has no redelivered flag, so its
+  release-failure path would stay open) and over document-only. Rethrowing on
+  release failure alone was ruled out: the redelivery would still find the
+  stale lock and be acked.
+- Implemented: `AbstractMessagingIdempotencyAdvice` throws the new public
+  `DeliveryInProgressException` (messaging-core) instead of returning `null`.
+  It's an ordinary retryable failure for every container (Kafka retries,
+  RabbitMQ requeues, JMS rolls back), so no broker seam changed. Accepted cost:
+  a genuinely concurrent duplicate loops through redelivery until the primary
+  finishes, so the container's retry/backoff must outlast `lock-ttl` (README
+  §5.5, ADR 0005 amendment).

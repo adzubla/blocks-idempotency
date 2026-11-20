@@ -2,6 +2,10 @@ package io.adzubla.blocks.idempotency.messaging.kafka;
 
 import io.adzubla.blocks.idempotency.annotation.Idempotent;
 import io.adzubla.blocks.idempotency.annotation.Idempotent.OnStoreFailure;
+import io.adzubla.blocks.idempotency.fingerprint.Fingerprint;
+import io.adzubla.blocks.idempotency.messaging.core.MessagingEffectiveKeyFactory;
+import io.adzubla.blocks.idempotency.model.EffectiveKey;
+import io.adzubla.blocks.idempotency.model.RecordState;
 import io.adzubla.blocks.idempotency.store.InMemoryIdempotencyStore;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -57,6 +61,7 @@ import static org.awaitility.Awaitility.await;
 class KafkaIdempotencyEndToEndTest {
 
     private static final String HEADER = Idempotent.IDEMPOTENCY_KEY_HEADER;
+    private static final Duration STALE_LOCK_TTL = Duration.ofSeconds(60);
 
     @Autowired
     private KafkaTemplate<String, String> kafkaTemplate;
@@ -123,6 +128,33 @@ class KafkaIdempotencyEndToEndTest {
 
         // The original delivery's own completion is unaffected - the listener never ran a second time.
         assertThat(listenerInvocations.get()).isEqualTo(1);
+    }
+
+    @Test
+    void deliveryOfAKeyHeldByAStaleLockIsRedeliveredUntilTheLockClearsInsteadOfBeingAcked() {
+        String rawKey = "key-stale-lock";
+        String body = "{\"amount\":10}";
+        // A primary that crashed mid-processing (or failed and couldn't reach the store to
+        // release) leaves its IN_PROGRESS reservation behind (issue 059). The TTL is long so
+        // the lock can't expire mid-test (wall-clock expiry is unreliable to time against);
+        // it's cleared explicitly below instead, standing in for lock-ttl expiry.
+        EffectiveKey key = MessagingEffectiveKeyFactory.create("orders", "orders-listener", rawKey);
+        String staleFenceToken = idempotencyStore.reserve(key,
+                Fingerprint.sha256(key.route(), key.handler(), body.getBytes(StandardCharsets.UTF_8)), STALE_LOCK_TTL)
+                .fenceToken().orElseThrow();
+
+        send(rawKey, body);
+
+        // While the stale lock holds, the delivery keeps being failed back to the broker rather
+        // than acked - the listener never runs, but the message isn't lost either.
+        await().during(Duration.ofSeconds(2)).atMost(Duration.ofSeconds(5))
+                .until(() -> listenerInvocations.get() == 0);
+
+        idempotencyStore.release(key, staleFenceToken);
+
+        // Once the lock clears, the broker's redelivery runs the listener - exactly once.
+        await().atMost(Duration.ofSeconds(20)).untilAsserted(() -> assertThat(listenerInvocations.get()).isEqualTo(1));
+        assertThat(idempotencyStore.find(key)).hasValueSatisfying(record -> assertThat(record.state()).isEqualTo(RecordState.COMPLETED));
     }
 
     @Test

@@ -11,10 +11,14 @@ module built in slice 054 — mirroring what the Kafka (036–039), RabbitMQ
 
 - **Collision** (fingerprint mismatch, `COLLISION`) → **dead-letter**. A key
   reused with a different payload is a producer bug or poison message.
-- **Concurrent in-progress duplicate** (`IN_PROGRESS`/`REJECT`) →
-  **ack-and-skip**. The other in-flight delivery already owns the effect;
-  leaving the message unacked would just cause a redundant redelivery once
-  its visibility timeout expires.
+- **In-progress key** (`IN_PROGRESS`/`REJECT`) → **nack for redelivery**:
+  let the shared advice's `DeliveryInProgressException` propagate, so the
+  message isn't deleted and comes back once its visibility timeout expires.
+  This was originally ack-and-skip, changed by
+  [issue 059](059-redis-messaging-redelivery-acked-while-locked.md) and the
+  ADR 0005 amendment. The in-progress holder may be a crashed primary's stale
+  lock, and acking would lose the message. The visibility timeout must
+  outlast `idempotency.lock-ttl`.
 - **Store-failure posture** (`STORE_UNAVAILABLE`) → **nack-with-backoff**
   under `onStoreFailure=CLOSED`, **proceed unprotected** under `OPEN`.
   Transient infra trouble, not a poison message.

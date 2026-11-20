@@ -160,7 +160,7 @@ sequenceDiagram
                 end
             else still in-progress, whenInProgress=REJECT
                 Engine-->>Adapter: Reject(IN_PROGRESS, retryAfter)
-                Adapter-->>Caller: 409 in_progress + Retry-After / acked (skipped, not invoked)
+                Adapter-->>Caller: 409 in_progress + Retry-After / nacked for redelivery (DeliveryInProgressException, not invoked)
             else still in-progress, whenInProgress=WAIT (HTTP only — ADR 0005 rejects WAIT at startup for messaging)
                 Engine->>Store: await(key, waitTimeout, pollInterval, pollJitter)
                 Store-->>Engine: completed record / empty / still in-progress

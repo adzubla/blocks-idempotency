@@ -73,6 +73,23 @@ Reasoning:
   (`whenInProgress`) becomes invalid depending on what kind of method it
   decorates — the messaging handler validator enforces a rule the HTTP
   validator doesn't have.
+- **Amended (2026-11-19, issue 059): `IN_PROGRESS` is nacked, not
+  ack-and-skipped.** The bet above on "the primary's own broker-native
+  redelivery" didn't hold for a TTL-based store. A primary that crashed, or
+  whose `release()` couldn't reach Redis, leaves its `IN_PROGRESS` lock
+  behind until `lock-ttl`. Its own redelivery, which RabbitMQ and JMS requeue
+  immediately and Kafka's error handler retries immediately, found that stale
+  lock and was ack-and-skipped, so the message was lost. A delivery that finds
+  its key `IN_PROGRESS` now throws `DeliveryInProgressException`, which every
+  container treats as a retryable failure, so the message stays with the
+  broker until the key resolves. This restores the crash-window fallback that
+  WAIT would have provided, without blocking a listener thread: the "wait"
+  becomes the container's own retry/backoff. Two costs follow. A genuinely
+  concurrent duplicate now loops through redelivery until the primary
+  finishes. And the container's retry/backoff budget must outlast `lock-ttl`,
+  or an exhausted retry routes the message to whatever the container does
+  with failed deliveries (DLT, DLQ, or logging). WAIT itself stays disabled:
+  the reasoning about blocking a thread is unchanged.
 - `RELEASED`/`TIMEOUT` never appear in the messaging action-mapping table
   (`docs/prd/messaging-extension.md` §5) as a result — only relevant again
   if this decision is revisited.

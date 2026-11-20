@@ -166,7 +166,7 @@ no rework needed there, only the translation layer:
 
 | Outcome | HTTP today | Messaging action | Why |
 |---|---|---|---|
-| `IN_PROGRESS` (REJECT) | 409 + Retry-After | **ack-and-skip** | The other in-flight delivery is already handling the effect; nacking would just cause a redundant redelivery loop. Safe because the primary's own message is natively redelivered by the broker if it fails. |
+| `IN_PROGRESS` (REJECT) | 409 + Retry-After | **nack (redeliver)** — `DeliveryInProgressException` | Originally ack-and-skip, on the reasoning that the primary's own message is natively redelivered if it fails. Changed by [issue 059](../issues/059-redis-messaging-redelivery-acked-while-locked.md): with a TTL-based store (Redis) a crashed primary, or one whose release couldn't reach the store, leaves a stale `IN_PROGRESS` lock, and that redelivery was itself acked away, losing the message. Failing the delivery keeps it with the broker until the key resolves. The cost is a redelivery loop for a genuinely concurrent duplicate, bounded by the container's retry/backoff policy. See ADR 0005. |
 | `EngineDecision.Unavailable` (every completed dupe — see §2) | 409 terminal | **ack-and-skip** | Routine outcome in messaging, not an error — see §2. |
 | `COLLISION` (fingerprint mismatch) | 422 | **dead-letter** | A key reused with a different payload is a producer bug or poison message — no consumer-side retry resolves it. |
 | `KEY_REQUIRED` / `KEY_INVALID` | 400 | **dead-letter** | A structurally bad message; broker-native redelivery can't fix a message that will never carry a valid key. |

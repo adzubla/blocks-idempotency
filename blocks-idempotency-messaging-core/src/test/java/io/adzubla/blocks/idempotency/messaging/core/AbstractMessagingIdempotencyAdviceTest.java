@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -133,20 +134,41 @@ class AbstractMessagingIdempotencyAdviceTest {
     }
 
     @Test
-    void concurrentDuplicateOfAnInProgressKeyIsAckedWithoutInvokingTheListener() throws Throwable {
+    void deliveryOfAnInProgressKeyIsFailedForRedeliveryWithoutInvokingTheListener() throws Throwable {
         String body = "{\"amount\":10}";
         // Reserve the key directly, leaving it IN_PROGRESS (never completed) - stands in for a
-        // primary delivery still mid-processing when a concurrent duplicate of the same key arrives.
+        // primary delivery still mid-processing, or one whose process crashed and left a stale lock.
         EffectiveKey key = MessagingEffectiveKeyFactory.create(DESTINATION, LISTENER_ID, "key-race");
         String fingerprint = Fingerprint.sha256(key.route(), key.handler(), body.getBytes(StandardCharsets.UTF_8));
         engineRegistry.engine(InMemoryIdempotencyStore.QUALIFIER).before(key, fingerprint, properties.getLockTtl(),
                 OnStoreFailure.OPEN, WhenInProgress.REJECT, properties.getWaitTimeout());
 
-        Object result = advice.handle(joinPointFor(delivery("key-race", body), "onMessage"));
+        assertThatThrownBy(() -> advice.handle(joinPointFor(delivery("key-race", body), "onMessage")))
+                .isInstanceOf(DeliveryInProgressException.class);
 
-        assertThat(result).isNull();
         assertThat(invocations.get()).isZero();
         assertThat(store.find(key)).hasValueSatisfying(record -> assertThat(record.state()).isEqualTo(RecordState.IN_PROGRESS));
+    }
+
+    @Test
+    void redeliveryAfterAFailedPrimaryWhoseReleaseCouldNotReachTheStoreIsNotAcked() throws Throwable {
+        String body = "{\"amount\":10}";
+        // The primary's listener fails just as the store goes down, so its release() can't reach
+        // the store and the key stays IN_PROGRESS until lock-ttl.
+        ProceedingJoinPoint failingPrimary = joinPointFor(delivery("key-release-blip", body), "onMessage");
+        doAnswer(invocation -> {
+            invocations.incrementAndGet();
+            store.setUnavailable(true);
+            throw new IllegalArgumentException("listener failed");
+        }).when(failingPrimary).proceed();
+        assertThatThrownBy(() -> advice.handle(failingPrimary)).isInstanceOf(IllegalArgumentException.class);
+        store.setUnavailable(false);
+
+        // The broker's immediate redelivery of the same message must not be acked away while
+        // the stale lock lives - it's the only copy left.
+        assertThatThrownBy(() -> advice.handle(joinPointFor(delivery("key-release-blip", body), "onMessage")))
+                .isInstanceOf(DeliveryInProgressException.class);
+        assertThat(invocations.get()).isEqualTo(1);
     }
 
     @Test

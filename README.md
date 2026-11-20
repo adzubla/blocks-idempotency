@@ -580,6 +580,31 @@ behavior described in the [Web](#51-web) section:
   — for example, a Kafka consumer sitting still long enough to trigger a
   partition rebalance. Only `REJECT` is supported for every messaging
   transport.
+- **A delivery whose key is still in progress is failed, not acked.** The
+  listener isn't invoked. The advice throws `DeliveryInProgressException`, so
+  the broker redelivers the message: Kafka's error handler retries it,
+  RabbitMQ requeues it, and JMS rolls back for redelivery. The in-progress
+  holder may be a primary that crashed or couldn't reach the store to
+  release, leaving a stale lock until `lock-ttl`. Acking would drop what may
+  be the only copy of that message. Once the key resolves, the redelivery
+  either runs (the lock expired or was released) or is acked as an ordinary
+  duplicate (completed). **Give this exception a retry/backoff budget that
+  outlasts `lock-ttl`.** The container defaults don't, so with them a message
+  held by a stale lock ends up wherever your container sends exhausted
+  retries:
+  - **Kafka:** `DefaultErrorHandler` defaults to `FixedBackOff(0, 9)`, which
+    gives up within milliseconds. Configure a backoff whose total span
+    exceeds `lock-ttl` (it can be classified for this exception type).
+  - **RabbitMQ:** a thrown exception is requeued immediately, with no delay,
+    which makes a tight loop while the lock holds. Quorum queues
+    (RabbitMQ 4.x default delivery-limit 20) drop or dead-letter it almost at
+    once. Prefer a delayed-retry topology, such as a dead-letter exchange
+    into a TTL'd retry queue (the same shape `onStoreFailure = CLOSED`
+    relies on), or raise the delivery limit.
+  - **JMS:** redelivery relies on a transacted listener session (Spring
+    Boot's default for `@JmsListener`). Plain `AUTO_ACKNOWLEDGE` doesn't
+    redeliver. Set the broker's redelivery delay and max attempts (Artemis
+    defaults to 10 attempts with no delay) so they span `lock-ttl`.
 - **Terminal failures are dead-lettered, not turned into an HTTP status.** A
   missing/invalid key or a fingerprint collision routes the message to a
   dead-letter topic/queue instead of a `422`/`400` response — Kafka and JMS

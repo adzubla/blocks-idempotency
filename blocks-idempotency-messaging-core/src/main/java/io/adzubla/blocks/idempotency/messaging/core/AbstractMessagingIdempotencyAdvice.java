@@ -120,9 +120,13 @@ public abstract class AbstractMessagingIdempotencyAdvice {
             return delivery.deadLetter("collision (fingerprint mismatch)", key.value());
         }
         if (decision instanceof EngineDecision.Reject reject && reject.reason() == RejectReason.IN_PROGRESS) {
-            log.debug("Concurrent duplicate delivery acked without invoking the listener: destination={} listener={} key={}",
+            // Not acked: the in-progress holder may be a crashed or failed primary whose stale
+            // lock outlives it, and this may be the broker's redelivery of that very message
+            // (ADR 0005, amended). Failing it hands it back to the broker until the key resolves.
+            log.debug("Delivery of an in-progress key failed for broker redelivery: destination={} listener={} key={}",
                     key.route(), key.handler(), key.value());
-            return null;
+            throw new DeliveryInProgressException("Idempotency key still in progress for destination=" + key.route()
+                    + " listener=" + key.handler() + " - delivery not acked, awaiting broker redelivery");
         }
         if (decision instanceof EngineDecision.FailClosed) {
             return delivery.failClosed();
