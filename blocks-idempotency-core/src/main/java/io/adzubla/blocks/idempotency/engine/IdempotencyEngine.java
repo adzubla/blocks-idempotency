@@ -112,7 +112,11 @@ public class IdempotencyEngine {
         if (record.isCompleted()) {
             return decisionForCompleted(key, record.response());
         }
-        // Still in-progress once waitTimeout ran out - give up.
+        // Still in-progress once waitTimeout ran out, or the wait was
+        // interrupted (the interrupt status stays set for the caller) - give up.
+        if (Thread.currentThread().isInterrupted()) {
+            log.debug("WAIT interrupted before the key resolved: {} {} key={}", key.route(), key.handler(), key.value());
+        }
         return reject(key, RejectReason.TIMEOUT, lockTtl);
     }
 

@@ -386,6 +386,10 @@ Web-specific global configuration is `idempotency.scope.principal-enabled` /
 - A concurrent duplicate finding the key in-progress gets an immediate
   `409` (`whenInProgress = REJECT`, the default), or blocks for the
   primary's result (`WAIT`) — the only transport where `WAIT` is supported.
+  A `WAIT` caller that runs out of `wait-timeout` gets `409` `timeout` with
+  `Retry-After`. So does one whose request thread is interrupted while it
+  waits (for example during shutdown); the thread's interrupt status is left
+  set.
 - Every rejecting outcome is thrown as a typed `IdempotencyException` rather
   than written to the response directly, so it flows through Spring's normal
   exception-handling machinery just like an exception thrown from a
@@ -733,7 +737,9 @@ database.
 key's own TTL, so if a legitimately-slow-but-alive primary runs longer than
 `lock-ttl`, the key is already gone by the time it calls `complete()` — the
 response is silently dropped (never cached), indistinguishable from a crashed
-primary being reclaimed. The effect still ran; only the caching is lost. Set
+primary being reclaimed. The effect still ran, but no record of it remains: a
+retry with the same key reserves it afresh and **runs the handler again**, and
+so can a duplicate that arrives while the slow primary is still running. Set
 `lock-ttl` comfortably above your worst-case handler duration. When this
 happens, `RedisIdempotencyStore` logs a `WARN` (`... completion no-op for ...
 - reservation gone or superseded ...`) so it's visible to an operator instead
@@ -894,7 +900,7 @@ the way route/handler (bounded by the number of `@Idempotent` methods) don't.
 | `concurrency`          | A concurrent in-progress duplicate was rejected (`409`) or a `WAIT` caller timed out.    | **Expected at some baseline** under legitimate racing retries.    | Watch the *rate*, not raw occurrences. A rising trend suggests handlers are running slower than clients expect (tune `wait-timeout`), or a caller is retrying too aggressively before the first attempt could finish.                                                                                                                                                                 |
 | `fail_open`            | The store was unavailable and `onStoreFailure=OPEN` let the request through unprotected. | **Abnormal — store health incident.**                             | Page/alert. During this window, duplicate side effects are *not* being prevented. Check store connectivity/latency/capacity immediately; this is the metric that tells you protection is currently off.                                                                                                                                                                               |
 | `fail_closed`          | The store was unavailable and `onStoreFailure=CLOSED` rejected the request (`503`).      | **Abnormal — store health incident, with visible client impact.** | Page/alert, same root cause as `fail_open` (store outage) but here clients are seeing failures directly. Check store connectivity/latency/capacity; consider whether `OPEN` is more appropriate for this endpoint's risk profile.                                                                                                                                                     |
-| `response_unavailable` | A completed record exists but its response can't be replayed (`409`, no `Retry-After`).  | **Abnormal if sustained.**                                        | Two causes: the original response exceeded `idempotency.max-body-size` (raise the limit if these are legitimate responses), or — Redis store only — a slow handler outran `lock-ttl` before completing (see [6.3 Redis](#63-redis)); raise `lock-ttl`. Retrying the same key can never succeed once this fires, so this is a signal to fix configuration, not to expect self-healing. |
+| `response_unavailable` | A completed record exists but its response can't be replayed (`409`, no `Retry-After`).  | **Abnormal if sustained.**                                        | The original response exceeded `idempotency.max-body-size` (raise the limit if these are legitimate responses). Retrying the same key can never succeed once this fires, so this is a signal to fix configuration, not to expect self-healing. |
 
 ### 7.3 Logs
 
@@ -904,7 +910,7 @@ tracing, and store-unavailable events log at `WARN` regardless of whether the
 resolved posture was fail-open or fail-closed. The Redis store additionally
 logs a `WARN` when `complete()` silently no-ops because the reservation was
 already gone or superseded (`... completion no-op for ... - reservation gone
-or superseded ...`) — the operator-visible half of the `lock-ttl`-too-short
-scenario described in [6.3 Redis](#63-redis); a rising `response_unavailable`
-count on a Redis-backed endpoint is what you'd correlate this log line
-against.
+or superseded ...`) — the only signal of the `lock-ttl`-too-short scenario
+described in [6.3 Redis](#63-redis). No outcome metric records it: the
+dropped record means the next attempt is an ordinary fresh reservation, so
+alert on this log line rather than on a metric.

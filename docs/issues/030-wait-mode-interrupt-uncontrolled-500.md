@@ -1,7 +1,7 @@
 # Slice 030 — Interrupt during WAIT-mode polling escapes as an uncontrolled 500
 
 > Source: bug hunt (2026-07-17) · Type: AFK
-> Status: needs-triage
+> Status: ready-for-agent
 
 ## What to build
 
@@ -28,10 +28,10 @@ status.
       `IdempotencyEngineWaitInterruptTest.interruptDuringWaitDoesNotLeakAnUncontrolledIllegalStateException`
       (`@Disabled`, deterministic via a pre-set interrupt). Removing `@Disabled`
       fails today because a bare `IllegalStateException` escapes `before()`.
-- [ ] An interrupt during WAIT-mode polling produces a controlled outcome (not a
+- [x] An interrupt during WAIT-mode polling produces a controlled outcome (not a
       raw `IllegalStateException`/500).
-- [ ] The thread's interrupt status is preserved for the caller.
-- [ ] Existing engine and WAIT-mode tests still pass.
+- [x] The thread's interrupt status is preserved for the caller.
+- [x] Existing engine and WAIT-mode tests still pass.
 
 ## Blocked by
 
@@ -41,3 +41,17 @@ status.
 
 - Filed from a code read of the shipped library (bug hunt, 2026-07-17). Filed
   **unfixed by request**: expose now, fix later.
+- 2026-11-20 — Implemented. An interrupt now ends the wait early, the same way
+  an elapsed `waitTimeout` does. `PollJitter.sleep` returns `false` on
+  interrupt and re-sets the flag instead of throwing. The default `await()`
+  then stops waiting and returns the last record it observed, which is still
+  `IN_PROGRESS`, without calling the store again: Lettuce would turn I/O on
+  an interrupted thread into `RedisCommandInterruptedException`. The engine
+  maps that to its existing `Reject(TIMEOUT)`, a `409 timeout` with
+  `Retry-After`, and logs the interrupt at `DEBUG`. The interrupt status stays
+  set for the container. Rejecting rather than throwing was chosen because the
+  waiter never ran the effect, so "gave up waiting, retry" is accurate. The
+  repro was rewritten as
+  `anInterruptDuringWaitEndsTheWaitAsAControlledTimeoutRejection` and is no
+  longer `@Disabled`. Postgres's native `await()` doesn't sleep, so it isn't
+  affected.

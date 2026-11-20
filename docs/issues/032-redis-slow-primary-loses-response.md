@@ -1,7 +1,7 @@
 # Slice 032 — Redis silently drops a slow primary's response once `lock-ttl` passes
 
 > Source: bug hunt (2026-07-17) · Type: AFK
-> Status: needs-triage
+> Status: wontfix
 
 ## What to build
 
@@ -41,9 +41,9 @@ Candidate responses, for triage:
       `RedisSlowPrimaryBestEffortTest.aSlowPrimaryPastItsLockTtlStillHasItsResponseCached`
       (`@Disabled`, `@Testcontainers`; expiry simulated by deleting the key).
       Removing `@Disabled` fails today because the response is dropped.
-- [ ] Triage decision recorded: document the `lock-ttl` guidance, add a
+- [x] Triage decision recorded: document the `lock-ttl` guidance, add a
       no-op-on-complete signal, or `wontfix` with rationale.
-- [ ] If kept as-is, `## Comments` captures why (documented best-effort
+- [x] If kept as-is, `## Comments` captures why (documented best-effort
       tradeoff), mirroring the existing declined slices.
 
 ## Blocked by
@@ -56,3 +56,15 @@ Candidate responses, for triage:
   a **documented limitation note**, not a defect against the store contract —
   raised so the tradeoff (and its config implication) is tracked rather than
   tribal knowledge.
+- 2026-11-20 — Triage: **wontfix**, as the documented best-effort trade-off.
+  The two other candidate responses are already in place. README §6.3
+  ("`lock-ttl` must outlast your slowest handler") documents the guidance, and
+  commit `f9cd4f3` added the `WARN` on a no-op `complete()`. Keeping a slow but
+  live primary's reservation would need a lease-renewal heartbeat, which is
+  out of proportion for a store documented as best-effort. Use Postgres when
+  that matters. While re-checking, the README turned out to say this scenario
+  surfaces as `response_unavailable`. It doesn't: the dropped record means a
+  retry is a fresh reservation and **re-runs the handler**. §6.3, the
+  `response_unavailable` metric row and §7.3 were corrected to say so, and to
+  point at the `WARN` log as the only signal. The repro stays `@Disabled` as
+  documentation of the limitation.

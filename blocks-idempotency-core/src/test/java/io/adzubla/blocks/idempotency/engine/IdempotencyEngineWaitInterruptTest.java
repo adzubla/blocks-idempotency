@@ -4,48 +4,43 @@ import io.adzubla.blocks.idempotency.annotation.Idempotent.OnStoreFailure;
 import io.adzubla.blocks.idempotency.annotation.Idempotent.WhenInProgress;
 import io.adzubla.blocks.idempotency.model.EffectiveKey;
 import io.adzubla.blocks.idempotency.store.InMemoryIdempotencyStore;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Exposes a bug (docs/issues/030-wait-mode-interrupt-uncontrolled-500.md):
- * {@code PollJitter.sleep} re-sets the interrupt flag and throws
- * {@link IllegalStateException} on {@code InterruptedException}
- * ({@code store/PollJitter.java:22-25}). {@code IdempotencyEngine.waitForCompletion}
- * catches only {@code StoreUnavailableException} ({@code IdempotencyEngine.java:101-105}),
- * so a thread interrupt while a duplicate is parked in WAIT mode propagates out
- * of {@code before()} as an uncontrolled {@link IllegalStateException} - a raw
- * 500 - instead of a controlled idempotency outcome.
+ * docs/issues/030-wait-mode-interrupt-uncontrolled-500.md: an interrupt while a
+ * duplicate is parked in WAIT mode used to escape {@code before()} as a bare
+ * {@link IllegalStateException} - a raw 500. It now ends the wait early, like
+ * an elapsed {@code waitTimeout}: the duplicate is rejected with {@code
+ * wait_timeout} (a controlled, retryable 409), and the thread's interrupt
+ * status is left set for the caller to act on.
  *
- * <p>Deterministic: pre-setting the interrupt makes the first
- * {@code Thread.sleep} inside WAIT-mode polling throw immediately.
- *
- * <p>{@code @Disabled} so CI stays green while the fix is deferred; remove it to
- * reproduce the failure.
+ * <p>Deterministic: pre-setting the interrupt makes the first {@code
+ * Thread.sleep} inside WAIT-mode polling throw immediately.
  */
 class IdempotencyEngineWaitInterruptTest {
 
     @Test
-    @Disabled("Exposes bug: docs/issues/030-wait-mode-interrupt-uncontrolled-500.md; remove @Disabled to reproduce")
-    void interruptDuringWaitDoesNotLeakAnUncontrolledIllegalStateException() {
+    void anInterruptDuringWaitEndsTheWaitAsAControlledTimeoutRejection() {
         InMemoryIdempotencyStore store = new InMemoryIdempotencyStore();
         EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-1");
         Duration lockTtl = Duration.ofSeconds(30);
         // A primary holds the key IN_PROGRESS, so a same-fingerprint duplicate
         // takes the WAIT path rather than proceeding or colliding.
         store.reserve(key, "fp", lockTtl);
-        IdempotencyEngine engine = new IdempotencyEngine(store, Duration.ofMillis(100), Duration.ZERO);
+        IdempotencyEngine engine = new IdempotencyEngine(store, Duration.ofSeconds(5), Duration.ZERO);
 
         Thread.currentThread().interrupt();
         try {
-            assertThatThrownBy(() -> engine.before(key, "fp", lockTtl,
-                    OnStoreFailure.OPEN, WhenInProgress.WAIT, Duration.ofSeconds(5)))
-                    .isNotInstanceOf(IllegalStateException.class);
+            long start = System.nanoTime();
+            EngineDecision decision = engine.before(key, "fp", lockTtl, OnStoreFailure.OPEN, WhenInProgress.WAIT, Duration.ofSeconds(30));
+            long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
+
+            assertThat(decision).isEqualTo(new EngineDecision.Reject(RejectReason.TIMEOUT, lockTtl));
+            assertThat(elapsedMillis).isLessThan(1_000); // returned on the interrupt, not after waitTimeout
             // The interrupt must remain observable to the caller, not be swallowed.
             assertThat(Thread.currentThread().isInterrupted()).isTrue();
         } finally {

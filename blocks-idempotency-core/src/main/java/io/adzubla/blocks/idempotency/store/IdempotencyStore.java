@@ -6,7 +6,6 @@ import io.adzubla.blocks.idempotency.model.IdempotencyRecord;
 import io.adzubla.blocks.idempotency.model.ReservationResult;
 
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Optional;
 
 /**
@@ -63,25 +62,39 @@ public interface IdempotencyStore {
      * record if {@code waitTimeout} elapses first - the caller tells "timed
      * out" from "released" apart by whether the {@link Optional} is present.
      *
+     * <p>A thread interrupt ends the wait early, like an elapsed {@code
+     * waitTimeout}: the last record observed is returned (still in progress),
+     * and the thread's interrupt status is left set for the caller.
+     *
      * <p>The default polls via {@link #find} at {@code pollInterval} (plus up
-     * to {@code pollJitter}) - the core model from ADR 0002. Stores with a
-     * native blocking primitive (Postgres's row lock) may override with their
-     * own mechanism instead, ignoring {@code pollInterval}/{@code pollJitter}.
+     * to {@code pollJitter}) - the core model from ADR 0002 - checking once
+     * before the first sleep, so an already-terminal key returns immediately.
+     * Stores with a native blocking primitive (Postgres's row lock) may
+     * override with their own mechanism instead, ignoring {@code
+     * pollInterval}/{@code pollJitter}.
+     *
+     * <p>The deadline is measured on the monotonic clock ({@link
+     * System#nanoTime()}), not the wall clock or a store's injectable {@code
+     * Clock}: {@code waitTimeout} bounds real time spent sleeping, so it must
+     * be measured on the same time base as the sleep. A wall clock that steps
+     * would cut the wait short or stretch it; a fake {@code Clock} that never
+     * advances would make it never end.
      */
     default Optional<IdempotencyRecord> await(EffectiveKey key, Duration waitTimeout, Duration pollInterval, Duration pollJitter) {
-        Instant deadline = Instant.now().plus(waitTimeout);
-        while (true) {
-            Duration remaining = Duration.between(Instant.now(), deadline);
-            if (remaining.isZero() || remaining.isNegative()) {
-                return find(key);
+        long deadline = System.nanoTime() + waitTimeout.toNanos();
+        Optional<IdempotencyRecord> current = find(key);
+        while (current.isPresent() && !current.get().isCompleted()) {
+            long remainingNanos = deadline - System.nanoTime();
+            if (remainingNanos <= 0) {
+                break;
             }
-            PollJitter.sleep(pollInterval, pollJitter, remaining);
-
-            Optional<IdempotencyRecord> current = find(key);
-            if (current.isEmpty() || current.get().isCompleted()) {
-                return current;
+            if (!PollJitter.sleep(pollInterval, pollJitter, Duration.ofNanos(remainingNanos))) {
+                // Interrupted: stop waiting without touching the store again
+                // (a client may refuse I/O on an interrupted thread).
+                break;
             }
-            // Still in-progress - loop back, remaining budget re-checked above.
+            current = find(key);
         }
+        return current;
     }
 }

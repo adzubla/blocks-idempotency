@@ -5,7 +5,6 @@ import io.adzubla.blocks.idempotency.model.EffectiveKey;
 import io.adzubla.blocks.idempotency.model.IdempotencyRecord;
 import io.adzubla.blocks.idempotency.model.RecordState;
 import io.adzubla.blocks.idempotency.model.ReservationResult;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -14,24 +13,13 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Exposes a bug (docs/issues/031-default-await-clock-and-initial-check.md) in
- * {@link IdempotencyStore}'s default {@code await} ({@code IdempotencyStore.java:57-72}):
- * it sleeps a full poll interval <em>before</em> its first {@code find()}, with
- * no fast-path check. A duplicate that arrives just after the primary completed
- * pays an avoidable poll interval of latency even though the answer is already
- * available.
- *
- * <p>(The same default also computes its deadline from wall-clock
- * {@code Instant.now()} rather than the store's injectable {@code Clock} that
- * drives {@code InMemoryIdempotencyStore} expiry - see the issue for that
- * related half of the finding.)
- *
- * <p>Deterministic: an inline store whose {@code find()} already reports
- * {@code COMPLETED}; a correct {@code await} returns via an initial check
- * without sleeping the (large) poll interval.
- *
- * <p>{@code @Disabled} so CI stays green while the fix is deferred; remove it to
- * reproduce the failure.
+ * {@link IdempotencyStore}'s default {@code await}
+ * (docs/issues/031-default-await-clock-and-initial-check.md,
+ * docs/issues/030-wait-mode-interrupt-uncontrolled-500.md): it checks {@code
+ * find()} once before its first sleep, so a duplicate that arrives just after
+ * the primary completed doesn't pay a poll interval of latency; and an
+ * interrupt ends the wait early with the last record observed, leaving the
+ * interrupt status set.
  */
 class IdempotencyStoreDefaultAwaitTest {
 
@@ -60,7 +48,6 @@ class IdempotencyStoreDefaultAwaitTest {
     };
 
     @Test
-    @Disabled("Exposes bug: docs/issues/031-default-await-clock-and-initial-check.md; remove @Disabled to reproduce")
     void awaitReturnsPromptlyForAnAlreadyCompletedKeyInsteadOfSleepingAPollInterval() {
         EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-1");
 
@@ -70,6 +57,26 @@ class IdempotencyStoreDefaultAwaitTest {
         long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
 
         assertThat(result).get().extracting(IdempotencyRecord::isCompleted).isEqualTo(true);
-        assertThat(elapsedMillis).isLessThan(500); // FAILS today: sleeps the full 2s poll interval first
+        assertThat(elapsedMillis).isLessThan(500); // not the 2s poll interval
+    }
+
+    @Test
+    void anInterruptEndsTheWaitWithTheLastObservedRecordAndKeepsTheInterruptStatus() {
+        EffectiveKey key = new EffectiveKey("/orders", "POST", "", "key-1");
+        InMemoryIdempotencyStore store = new InMemoryIdempotencyStore();
+        store.reserve(key, "fp", Duration.ofSeconds(30));
+
+        Thread.currentThread().interrupt();
+        try {
+            long start = System.nanoTime();
+            Optional<IdempotencyRecord> result = store.await(key, Duration.ofSeconds(30), Duration.ofSeconds(5), Duration.ZERO);
+            long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
+
+            assertThat(result).get().extracting(IdempotencyRecord::state).isEqualTo(RecordState.IN_PROGRESS);
+            assertThat(elapsedMillis).isLessThan(1_000);
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
     }
 }

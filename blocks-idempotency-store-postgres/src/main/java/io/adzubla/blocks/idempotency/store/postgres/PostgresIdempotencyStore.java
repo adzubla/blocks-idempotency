@@ -28,7 +28,6 @@ import java.security.NoSuchAlgorithmException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -292,9 +291,11 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
      */
     @Override
     public Optional<IdempotencyRecord> await(EffectiveKey key, Duration waitTimeout, Duration pollInterval, Duration pollJitter) {
-        Instant deadline = Instant.now().plus(waitTimeout);
+        // Monotonic, like IdempotencyStore's default: a stepping wall clock
+        // must not cut the wait short or stretch it.
+        long deadline = System.nanoTime() + waitTimeout.toNanos();
         while (true) {
-            Duration remaining = Duration.between(Instant.now(), deadline);
+            Duration remaining = Duration.ofNanos(deadline - System.nanoTime());
             if (remaining.isZero() || remaining.isNegative()) {
                 return findRecord(key);
             }
