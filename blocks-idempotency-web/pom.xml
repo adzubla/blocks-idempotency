@@ -20,9 +20,24 @@
             <artifactId>blocks-idempotency-core</artifactId>
         </dependency>
 
+        <!-- Spring MVC (brings spring-web). Not the web starter: that would add an embedded
+             servlet container and Jackson to every application, which already chose its own. -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webmvc</artifactId>
+        </dependency>
+        <!-- Servlet API: the application's servlet container supplies it at runtime. -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Test: a full web application classpath (embedded container, Jackson) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+            <scope>test</scope>
         </dependency>
 
         <dependency>

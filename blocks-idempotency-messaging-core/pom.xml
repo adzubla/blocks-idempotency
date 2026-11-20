@@ -21,12 +21,8 @@
         </dependency>
 
         <!-- @Around advice skeleton (ProceedingJoinPoint / MethodSignature) subclassed
-             by each broker's own @Aspect; spring-aop supplies the runtime proxying the
-             concrete aspects rely on. -->
-        <dependency>
-            <groupId>org.springframework</groupId>
-            <artifactId>spring-aop</artifactId>
-        </dependency>
+             by each broker's own @Aspect. spring-aop, which does the runtime proxying,
+             comes in through spring-context. -->
         <dependency>
             <groupId>org.aspectj</groupId>
             <artifactId>aspectjweaver</artifactId>

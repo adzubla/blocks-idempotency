@@ -88,7 +88,7 @@ listeners side by side) and stores.
 | Artifact                                | Purpose                                                                         |
 |-----------------------------------------|---------------------------------------------------------------------------------|
 | `blocks-idempotency-core`               | Required. `@Idempotent`, the policy engine, the `IdempotencyStore` abstraction. |
-| `blocks-idempotency-web`                | Add for Spring MVC/Servlet REST endpoints.                                      |
+| `blocks-idempotency-web`                | Add for Spring MVC/Servlet REST endpoints. Your app supplies Spring MVC and the servlet container (`spring-boot-starter-web`). |
 | `blocks-idempotency-messaging-kafka`    | Add for `@KafkaListener` methods.                                               |
 | `blocks-idempotency-messaging-rabbitmq` | Add for `@RabbitListener` methods.                                              |
 | `blocks-idempotency-messaging-jms`      | Add for `@JmsListener` methods.                                                 |
@@ -115,8 +115,13 @@ listeners side by side) and stores.
 
 Each store module auto-configures its `IdempotencyStore` bean as soon as its
 Spring Boot starter is on the classpath and configured (`spring-boot-starter-data-redis`
-for Redis, `spring-boot-starter-jdbc` + a `DataSource` for Postgres). `core`
-never provides a default store on its own — you need at least one store
+for Redis, `spring-boot-starter-jdbc` + a `DataSource` for Postgres). The store
+modules bring those starters with them, as the messaging modules bring their
+broker client. `blocks-idempotency-web` does not bring the web starter or a servlet
+container: it uses the Spring MVC and servlet API of your application, so your
+app needs `spring-boot-starter-web` (or `-webmvc`).
+
+`core` never provides a default store on its own — you need at least one store
 module. Each messaging module likewise auto-configures its advice as soon as
 its listener annotation is on the classpath alongside `core` and a store
 module.
@@ -124,7 +129,7 @@ module.
 ### 3.2. Quick start
 
 A minimal HTTP setup with Redis. Add `core`, `web` and `store-redis` as shown
-above, then:
+above, on top of `spring-boot-starter-web`, then:
 
 ```properties
 spring.data.redis.host=localhost

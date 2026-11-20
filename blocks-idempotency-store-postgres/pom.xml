@@ -15,28 +15,13 @@
     <description>Exactly-once IdempotencyStore backed by PostgreSQL (transactional reservation)</description>
 
     <dependencies>
+        <!-- Idempotency core: annotation, engine, IdempotencyStore SPI -->
         <dependency>
             <groupId>io.adzubla.blocks</groupId>
             <artifactId>blocks-idempotency-core</artifactId>
         </dependency>
 
-        <!-- The shared IdempotencyStore contract test suite (Slice 014) -->
-        <dependency>
-            <groupId>io.adzubla.blocks</groupId>
-            <artifactId>blocks-idempotency-core</artifactId>
-            <type>test-jar</type>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- Test-only: the HTTP integration this module's MockMvc end-to-end
-             tests drive the store through (filter/interceptor/exception
-             handling) - not a runtime dependency of the store itself. -->
-        <dependency>
-            <groupId>io.adzubla.blocks</groupId>
-            <artifactId>blocks-idempotency-web</artifactId>
-            <scope>test</scope>
-        </dependency>
-
+        <!-- JDBC and the PostgreSQL driver -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-jdbc</artifactId>
@@ -47,72 +32,57 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Tests only: they apply the shipped schema script through Flyway. The library itself
-             doesn't use Flyway; the application applies the script with its own migration tool. -->
+        <!-- Test: JUnit, AssertJ, Mockito, Spring Test -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Test: shared IdempotencyStore contract suite from core -->
+        <dependency>
+            <groupId>io.adzubla.blocks</groupId>
+            <artifactId>blocks-idempotency-core</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Test: HTTP end-to-end through MockMvc (filter, interceptor, exception handling) -->
+        <dependency>
+            <groupId>io.adzubla.blocks</groupId>
+            <artifactId>blocks-idempotency-web</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Test: schema setup. The tests apply the shipped schema script through Flyway; the library
+             itself doesn't use Flyway, the application applies the script with its own migration tool. -->
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- Flyway 10+ split PostgreSQL support out of flyway-core -->
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-database-postgresql</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- Spring Boot 4.0's per-tech autoconfigure split moved Flyway's
-             auto-migration-on-startup support out of spring-boot-autoconfigure -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-flyway</artifactId>
             <scope>test</scope>
         </dependency>
 
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <!-- @AutoConfigureMockMvc moved here in Spring Boot 4.0's per-tech test split -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-webmvc-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-testcontainers</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>testcontainers-postgresql</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>testcontainers-junit-jupiter</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- Test-only: proves an app can wire both store modules at once and have
-             each endpoint route to its own store (the multi-store resolution gap). -->
-        <dependency>
-            <groupId>io.adzubla.blocks</groupId>
-            <artifactId>blocks-idempotency-store-redis</artifactId>
-            <version>${project.version}</version>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>com.redis</groupId>
-            <artifactId>testcontainers-redis</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-        <!-- Test-only: the Kafka integration this module's embedded-Kafka
-             end-to-end tests (Slice 042) drive the store through (AOP
-             advice/engine/dead-letter publishing) - not a runtime dependency
-             of the store itself. -->
+        <!-- Test: Kafka end-to-end (embedded broker; AOP advice, engine, dead-letter publishing) -->
         <dependency>
             <groupId>io.adzubla.blocks</groupId>
             <artifactId>blocks-idempotency-messaging-kafka</artifactId>
@@ -124,9 +94,7 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- Test-only: the RabbitMQ integration this module's Testcontainers
-             end-to-end tests (Slice 047) drive the store through (AOP
-             advice/engine) - not a runtime dependency of the store itself. -->
+        <!-- Test: RabbitMQ end-to-end (Testcontainers broker; AOP advice, engine) -->
         <dependency>
             <groupId>io.adzubla.blocks</groupId>
             <artifactId>blocks-idempotency-messaging-rabbitmq</artifactId>
@@ -142,10 +110,9 @@
             <artifactId>testcontainers-rabbitmq</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- RetryOperationsInterceptor, bounding the flaky/no-transactional
-             listeners' thrown-exception redelivery so those tests' retries
-             don't run forever - RabbitMQ's own equivalent of Kafka's
-             DefaultErrorHandler(FixedBackOff) on the container factory. -->
+
+        <!-- Test: bounds RabbitMQ listener redelivery (RetryInterceptorBuilder needs spring-retry,
+             which Spring Boot 4 no longer manages) -->
         <dependency>
             <groupId>org.springframework.retry</groupId>
             <artifactId>spring-retry</artifactId>
@@ -153,9 +120,7 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- Test-only: the JMS integration this module's embedded-Artemis
-             end-to-end tests (Slice 053) drive the store through (AOP
-             advice/engine) - not a runtime dependency of the store itself. -->
+        <!-- Test: JMS end-to-end (embedded Artemis broker; AOP advice, engine, dead-letter publishing) -->
         <dependency>
             <groupId>io.adzubla.blocks</groupId>
             <artifactId>blocks-idempotency-messaging-jms</artifactId>
@@ -169,6 +134,35 @@
         <dependency>
             <groupId>org.apache.activemq</groupId>
             <artifactId>artemis-jakarta-server</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Test: both store modules wired at once, each endpoint routed to its own store -->
+        <dependency>
+            <groupId>io.adzubla.blocks</groupId>
+            <artifactId>blocks-idempotency-store-redis</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.redis</groupId>
+            <artifactId>testcontainers-redis</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Test: Testcontainers (JUnit 5 integration, @ServiceConnection) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-postgresql</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
