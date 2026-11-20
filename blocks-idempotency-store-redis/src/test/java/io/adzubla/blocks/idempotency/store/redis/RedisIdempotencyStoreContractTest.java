@@ -13,7 +13,6 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.Map;
@@ -52,7 +51,7 @@ class RedisIdempotencyStoreContractTest extends IdempotencyStoreContractTest {
     protected IdempotencyStore createStore() {
         StringRedisTemplate redisTemplate = new StringRedisTemplate(connectionFactory);
         redisTemplate.afterPropertiesSet();
-        return new RedisIdempotencyStore(redisTemplate, new ObjectMapper(), "idempotency-test:");
+        return new RedisIdempotencyStore(redisTemplate, "idempotency-test:");
     }
 
     /**

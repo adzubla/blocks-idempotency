@@ -14,7 +14,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.Map;
@@ -67,7 +66,7 @@ class PostgresDanglingReservationScopeTest {
 
     @Test
     void completingAFreshReservationDoesNotCommitADanglingOneLeftOnTheSameThread() {
-        store = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, new ObjectMapper(), Duration.ofSeconds(2));
+        store = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, Duration.ofSeconds(2));
         EffectiveKey dangling = new EffectiveKey("/orders", "POST", "", "dangling-A");
         EffectiveKey fresh = new EffectiveKey("/invoices", "POST", "", "fresh-B");
 
@@ -87,7 +86,7 @@ class PostgresDanglingReservationScopeTest {
 
     @Test
     void aDanglingReservationsKeyIsFreeForAFreshReservationAfterwards() {
-        store = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, new ObjectMapper(), Duration.ofSeconds(2));
+        store = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, Duration.ofSeconds(2));
         EffectiveKey dangling = new EffectiveKey("/orders", "POST", "", "dangling-C");
         EffectiveKey fresh = new EffectiveKey("/invoices", "POST", "", "fresh-D");
 
@@ -102,7 +101,7 @@ class PostgresDanglingReservationScopeTest {
 
     @Test
     void aNestedReservationOfTheSameKeyStillJoinsTheOpenOne() {
-        store = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, new ObjectMapper(), Duration.ofSeconds(2));
+        store = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, Duration.ofSeconds(2));
         EffectiveKey key = new EffectiveKey("/orders", "POST", "", "same-E");
         String token = store.reserve(key, "fpE", Duration.ofSeconds(30)).fenceToken().orElseThrow();
 

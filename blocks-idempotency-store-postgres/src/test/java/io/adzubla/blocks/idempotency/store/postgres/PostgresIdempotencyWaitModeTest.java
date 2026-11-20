@@ -18,7 +18,6 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.Map;
@@ -86,8 +85,8 @@ class PostgresIdempotencyWaitModeTest {
 
     @BeforeEach
     void setUp() {
-        primaryStore = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, new ObjectMapper(), LOCK_TTL);
-        waiterStore = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, new ObjectMapper(), WAITER_RESERVE_LOCK_TIMEOUT);
+        primaryStore = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, LOCK_TTL);
+        waiterStore = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, WAITER_RESERVE_LOCK_TIMEOUT);
         primaryEngine = new IdempotencyEngine(primaryStore);
         waiterEngine = new IdempotencyEngine(waiterStore, IMPLAUSIBLY_LONG_POLL_INTERVAL, Duration.ZERO);
     }

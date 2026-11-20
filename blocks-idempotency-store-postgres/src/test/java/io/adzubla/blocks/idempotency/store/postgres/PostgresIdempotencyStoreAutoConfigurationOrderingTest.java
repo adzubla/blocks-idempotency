@@ -13,7 +13,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.JdbcTransactionManager;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
-import tools.jackson.databind.ObjectMapper;
 
 import javax.sql.DataSource;
 
@@ -80,10 +79,6 @@ class PostgresIdempotencyStoreAutoConfigurationOrderingTest {
             return new JdbcTransactionManager(dataSource);
         }
 
-        @Bean
-        ObjectMapper objectMapper() {
-            return new ObjectMapper();
-        }
 
         @Bean
         RequestMappingHandlerMapping requestMappingHandlerMapping() {

@@ -20,7 +20,7 @@ import org.springframework.transaction.TransactionSystemException;
 import org.springframework.transaction.support.DefaultTransactionDefinition;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.type.TypeReference;
-import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -168,17 +168,22 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
      */
     private static final int MAX_RESERVE_ATTEMPTS = 8;
 
+    /**
+     * Serializes the cached response headers. A private mapper with default settings, not the
+     * application's {@code ObjectMapper}: this JSON is the store's own persisted format, so the
+     * application's Jackson configuration (default typing, mixins, naming) must not change it.
+     */
+    private static final JsonMapper HEADER_MAPPER = JsonMapper.builder().build();
+
     private final JdbcTemplate jdbc;
     private final PlatformTransactionManager transactionManager;
-    private final ObjectMapper headerMapper;
     private final Duration lockTimeout;
     private final ThreadLocal<ReservationScope> scope = new ThreadLocal<>();
 
-    public PostgresIdempotencyStore(JdbcTemplate jdbc, PlatformTransactionManager transactionManager, ObjectMapper headerMapper,
+    public PostgresIdempotencyStore(JdbcTemplate jdbc, PlatformTransactionManager transactionManager,
             Duration lockTimeout) {
         this.jdbc = jdbc;
         this.transactionManager = transactionManager;
-        this.headerMapper = headerMapper;
         this.lockTimeout = lockTimeout;
     }
 
@@ -563,7 +568,7 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
 
     private String toJson(Map<String, List<String>> headers) {
         try {
-            return headerMapper.writeValueAsString(headers);
+            return HEADER_MAPPER.writeValueAsString(headers);
         } catch (JacksonException e) {
             throw new IllegalStateException("failed to serialize response headers", e);
         }
@@ -574,7 +579,7 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
             return Map.of();
         }
         try {
-            return headerMapper.readValue(json, new TypeReference<>() {
+            return HEADER_MAPPER.readValue(json, new TypeReference<>() {
             });
         } catch (JacksonException e) {
             throw new IllegalStateException("failed to parse response headers", e);

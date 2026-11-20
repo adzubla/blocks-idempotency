@@ -15,7 +15,6 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.Map;
@@ -63,7 +62,7 @@ class PostgresColumnLimitsTest {
     void setUp() {
         jdbc = new JdbcTemplate(dataSource);
         jdbc.update("DELETE FROM idempotency_record");
-        store = new PostgresIdempotencyStore(jdbc, transactionManager, new ObjectMapper(), Duration.ofSeconds(2));
+        store = new PostgresIdempotencyStore(jdbc, transactionManager, Duration.ofSeconds(2));
     }
 
     @AfterEach

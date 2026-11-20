@@ -10,7 +10,6 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.List;
@@ -59,7 +58,7 @@ class RedisIdempotencyStoreConcurrencyTest {
     void exactlyOneOfManyConcurrentReservesOnTheSameKeyWins() throws Exception {
         StringRedisTemplate redisTemplate = new StringRedisTemplate(connectionFactory);
         redisTemplate.afterPropertiesSet();
-        RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, new ObjectMapper(), "idempotency-concurrency-test:");
+        RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, "idempotency-concurrency-test:");
         EffectiveKey key = new EffectiveKey("/orders", "POST", "", "race-1");
 
         ExecutorService executor = Executors.newFixedThreadPool(CONCURRENT_CALLERS);

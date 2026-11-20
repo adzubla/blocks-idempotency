@@ -10,7 +10,6 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import tools.jackson.databind.ObjectMapper;
 
 /**
  * Registers the Redis-backed store under the {@code "redis"} qualifier when Spring
@@ -34,8 +33,8 @@ public class RedisIdempotencyStoreAutoConfiguration {
     @Bean
     @Qualifier(RedisIdempotencyStore.QUALIFIER)
     @ConditionalOnMissingBean(name = "redisIdempotencyStore")
-    public IdempotencyStore redisIdempotencyStore(StringRedisTemplate redisTemplate, ObjectMapper objectMapper,
+    public IdempotencyStore redisIdempotencyStore(StringRedisTemplate redisTemplate,
             RedisStoreProperties properties) {
-        return new RedisIdempotencyStore(redisTemplate, objectMapper, properties.getKeyPrefix());
+        return new RedisIdempotencyStore(redisTemplate, properties.getKeyPrefix());
     }
 }

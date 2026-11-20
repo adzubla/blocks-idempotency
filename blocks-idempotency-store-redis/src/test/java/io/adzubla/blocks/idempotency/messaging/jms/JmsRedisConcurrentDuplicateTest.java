@@ -27,7 +27,6 @@ import org.springframework.jms.annotation.JmsListener;
 import org.springframework.jms.core.JmsTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import tools.jackson.databind.ObjectMapper;
 
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
@@ -80,7 +79,7 @@ class JmsRedisConcurrentDuplicateTest {
     void concurrentDuplicateDeliveryOfTheSameKeyIsFailedForRedeliveryWithoutInvokingTheListener() throws Throwable {
         StringRedisTemplate redisTemplate = new StringRedisTemplate(connectionFactory);
         redisTemplate.afterPropertiesSet();
-        RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, new ObjectMapper(), "idempotency-jms-race-test:");
+        RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, "idempotency-jms-race-test:");
 
         IdempotencyProperties properties = new IdempotencyProperties();
         properties.setDefaultStore(RedisIdempotencyStore.QUALIFIER);

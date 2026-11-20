@@ -12,7 +12,6 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.Map;
@@ -122,7 +121,7 @@ class PostgresIdempotencyStoreOutageTest {
 
         DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
         PostgresIdempotencyStore store = new PostgresIdempotencyStore(
-                new JdbcTemplate(dataSource), transactionManager, new ObjectMapper(), Duration.ofSeconds(2));
+                new JdbcTemplate(dataSource), transactionManager, Duration.ofSeconds(2));
         return new Fixture(dataSource, store);
     }
 

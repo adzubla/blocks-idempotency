@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.Map;
@@ -51,7 +50,7 @@ class RedisIdempotencyStoreReserveRaceTest {
         when(redis.opsForHash()).thenReturn(hashOps);
         when(hashOps.entries(any())).thenReturn(Map.of());
 
-        RedisIdempotencyStore store = new RedisIdempotencyStore(redis, new ObjectMapper(), "idem:");
+        RedisIdempotencyStore store = new RedisIdempotencyStore(redis, "idem:");
 
         ReservationResult result = store.reserve(key, "fp", Duration.ofSeconds(30));
 
@@ -71,7 +70,7 @@ class RedisIdempotencyStoreReserveRaceTest {
         when(redis.opsForHash()).thenReturn(hashOps);
         when(hashOps.entries(any())).thenReturn(Map.of());
 
-        RedisIdempotencyStore store = new RedisIdempotencyStore(redis, new ObjectMapper(), "idem:");
+        RedisIdempotencyStore store = new RedisIdempotencyStore(redis, "idem:");
 
         assertThatThrownBy(() -> store.reserve(key, "fp", Duration.ofSeconds(30)))
                 .isInstanceOf(StoreUnavailableException.class);

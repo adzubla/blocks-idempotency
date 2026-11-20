@@ -9,7 +9,6 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.HexFormat;
@@ -49,7 +48,7 @@ class RedisSlowPrimaryBestEffortTest {
         connectionFactory.afterPropertiesSet();
         StringRedisTemplate redisTemplate = new StringRedisTemplate(connectionFactory);
         redisTemplate.afterPropertiesSet();
-        RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, new ObjectMapper(), PREFIX);
+        RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, PREFIX);
         EffectiveKey key = new EffectiveKey("/orders", "POST", "", "slow-1");
 
         String fenceToken = store.reserve(key, "fp", Duration.ofMillis(50)).fenceToken().orElseThrow();

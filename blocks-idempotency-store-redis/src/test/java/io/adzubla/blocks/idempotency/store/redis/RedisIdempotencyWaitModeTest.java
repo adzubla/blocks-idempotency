@@ -15,7 +15,6 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.Map;
@@ -62,7 +61,7 @@ class RedisIdempotencyWaitModeTest {
     void aWaitModeCallerObservesARealRedisBackedPrimarysCompletion() throws Exception {
         StringRedisTemplate redisTemplate = new StringRedisTemplate(connectionFactory);
         redisTemplate.afterPropertiesSet();
-        RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, new ObjectMapper(), "idempotency-wait-test:");
+        RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, "idempotency-wait-test:");
         IdempotencyEngine engine = new IdempotencyEngine(store);
         EffectiveKey key = new EffectiveKey("/orders", "POST", "", "wait-1");
         CachedResponse response = new CachedResponse(201, Map.of(), "{\"id\":1}".getBytes());

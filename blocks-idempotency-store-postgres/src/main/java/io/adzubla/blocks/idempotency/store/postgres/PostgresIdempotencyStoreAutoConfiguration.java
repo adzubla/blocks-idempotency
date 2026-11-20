@@ -12,7 +12,6 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
-import tools.jackson.databind.ObjectMapper;
 
 /**
  * Registers the Postgres-backed store under the {@code "postgres"} qualifier when
@@ -43,8 +42,8 @@ public class PostgresIdempotencyStoreAutoConfiguration {
     @Qualifier(PostgresIdempotencyStore.QUALIFIER)
     @ConditionalOnMissingBean(name = "postgresIdempotencyStore")
     public IdempotencyStore postgresIdempotencyStore(JdbcTemplate jdbcTemplate, PlatformTransactionManager transactionManager,
-            ObjectMapper objectMapper, PostgresStoreProperties properties) {
-        return new PostgresIdempotencyStore(jdbcTemplate, transactionManager, objectMapper, properties.getLockTimeout());
+            PostgresStoreProperties properties) {
+        return new PostgresIdempotencyStore(jdbcTemplate, transactionManager, properties.getLockTimeout());
     }
 
     @Bean

@@ -15,7 +15,6 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.HexFormat;
@@ -48,7 +47,7 @@ class RedisCompleteNoOpLoggingTest {
         connectionFactory.afterPropertiesSet();
         StringRedisTemplate redisTemplate = new StringRedisTemplate(connectionFactory);
         redisTemplate.afterPropertiesSet();
-        store = new RedisIdempotencyStore(redisTemplate, new ObjectMapper(), PREFIX);
+        store = new RedisIdempotencyStore(redisTemplate, PREFIX);
 
         appender = new ListAppender<>();
         appender.start();

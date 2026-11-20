@@ -11,7 +11,6 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 
@@ -63,7 +62,7 @@ class PostgresIdempotencyStoreContractTest extends IdempotencyStoreContractTest 
 
     @Override
     protected IdempotencyStore createStore() {
-        store = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, new ObjectMapper(), Duration.ofSeconds(2));
+        store = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, Duration.ofSeconds(2));
         return store;
     }
 }

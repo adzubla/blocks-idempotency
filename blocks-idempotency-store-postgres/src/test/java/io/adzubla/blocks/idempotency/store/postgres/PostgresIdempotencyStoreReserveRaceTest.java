@@ -8,7 +8,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionStatus;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.List;
@@ -55,7 +54,7 @@ class PostgresIdempotencyStoreReserveRaceTest {
                 .thenReturn(List.of());
 
         PostgresIdempotencyStore store =
-                new PostgresIdempotencyStore(jdbc, transactionManager, new ObjectMapper(), Duration.ofSeconds(2));
+                new PostgresIdempotencyStore(jdbc, transactionManager, Duration.ofSeconds(2));
         try {
             ReservationResult result = store.reserve(key, "fp", Duration.ofSeconds(30));
             assertThat(result.outcome()).isEqualTo(ReservationResult.Outcome.RESERVED);
@@ -79,7 +78,7 @@ class PostgresIdempotencyStoreReserveRaceTest {
                 .thenReturn(List.of());
 
         PostgresIdempotencyStore store =
-                new PostgresIdempotencyStore(jdbc, transactionManager, new ObjectMapper(), Duration.ofSeconds(2));
+                new PostgresIdempotencyStore(jdbc, transactionManager, Duration.ofSeconds(2));
 
         assertThatThrownBy(() -> store.reserve(key, "fp", Duration.ofSeconds(30)))
                 .isInstanceOf(StoreUnavailableException.class);

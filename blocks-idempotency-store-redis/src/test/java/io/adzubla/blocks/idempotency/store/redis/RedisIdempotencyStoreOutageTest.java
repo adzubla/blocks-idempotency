@@ -12,7 +12,6 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 
@@ -47,7 +46,7 @@ class RedisIdempotencyStoreOutageTest {
         connectionFactory.afterPropertiesSet();
         StringRedisTemplate redisTemplate = new StringRedisTemplate(connectionFactory);
         redisTemplate.afterPropertiesSet();
-        RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, new ObjectMapper(), "idempotency-outage-test:");
+        RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, "idempotency-outage-test:");
         EffectiveKey key = new EffectiveKey("/orders", "POST", "", "outage-1");
 
         // Sanity check: the store genuinely works against this container

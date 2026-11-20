@@ -14,7 +14,6 @@ import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.util.Map;
@@ -75,7 +74,7 @@ class PostgresNativeConcurrencyTest {
 
     @BeforeEach
     void setUp() {
-        store = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, new ObjectMapper(), DEFAULT_LOCK_TIMEOUT);
+        store = new PostgresIdempotencyStore(new JdbcTemplate(dataSource), transactionManager, DEFAULT_LOCK_TIMEOUT);
     }
 
     @Test
@@ -185,7 +184,7 @@ class PostgresNativeConcurrencyTest {
     @Test
     void aWaiterGivesUpAtLockTimeoutRatherThanBlockingForever() throws Exception {
         PostgresIdempotencyStore boundedStore = new PostgresIdempotencyStore(
-                new JdbcTemplate(dataSource), transactionManager, new ObjectMapper(), SHORT_LOCK_TIMEOUT);
+                new JdbcTemplate(dataSource), transactionManager, SHORT_LOCK_TIMEOUT);
         EffectiveKey key = key("timeout-1");
         CountDownLatch primaryReserved = new CountDownLatch(1);
         CountDownLatch releasePrimary = new CountDownLatch(1);

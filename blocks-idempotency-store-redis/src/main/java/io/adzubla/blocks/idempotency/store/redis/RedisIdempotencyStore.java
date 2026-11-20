@@ -16,7 +16,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.type.TypeReference;
-import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.util.Base64;
@@ -119,13 +119,18 @@ public class RedisIdempotencyStore implements IdempotencyStore {
      */
     private static final int MAX_RESERVE_ATTEMPTS = 8;
 
+    /**
+     * Serializes the cached response headers. A private mapper with default settings, not the
+     * application's {@code ObjectMapper}: this JSON is the store's own persisted format, so the
+     * application's Jackson configuration (default typing, mixins, naming) must not change it.
+     */
+    private static final JsonMapper HEADER_MAPPER = JsonMapper.builder().build();
+
     private final StringRedisTemplate redis;
-    private final ObjectMapper headerMapper;
     private final String keyPrefix;
 
-    public RedisIdempotencyStore(StringRedisTemplate redis, ObjectMapper headerMapper, String keyPrefix) {
+    public RedisIdempotencyStore(StringRedisTemplate redis, String keyPrefix) {
         this.redis = redis;
-        this.headerMapper = headerMapper;
         this.keyPrefix = keyPrefix;
     }
 
@@ -225,7 +230,7 @@ public class RedisIdempotencyStore implements IdempotencyStore {
 
     private String toJson(Map<String, List<String>> headers) {
         try {
-            return headerMapper.writeValueAsString(headers);
+            return HEADER_MAPPER.writeValueAsString(headers);
         } catch (JacksonException e) {
             throw new IllegalStateException("failed to serialize response headers", e);
         }
@@ -236,7 +241,7 @@ public class RedisIdempotencyStore implements IdempotencyStore {
             return Map.of();
         }
         try {
-            return headerMapper.readValue(json, new TypeReference<>() {
+            return HEADER_MAPPER.readValue(json, new TypeReference<>() {
             });
         } catch (JacksonException e) {
             throw new IllegalStateException("failed to parse response headers", e);

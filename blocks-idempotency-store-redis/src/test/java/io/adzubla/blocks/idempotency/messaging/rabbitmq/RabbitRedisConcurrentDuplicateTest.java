@@ -23,7 +23,6 @@ import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactor
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import tools.jackson.databind.ObjectMapper;
 
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
@@ -74,7 +73,7 @@ class RabbitRedisConcurrentDuplicateTest {
     void concurrentDuplicateDeliveryOfTheSameKeyIsFailedForRedeliveryWithoutInvokingTheListener() throws Throwable {
         StringRedisTemplate redisTemplate = new StringRedisTemplate(connectionFactory);
         redisTemplate.afterPropertiesSet();
-        RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, new ObjectMapper(), "idempotency-rabbitmq-race-test:");
+        RedisIdempotencyStore store = new RedisIdempotencyStore(redisTemplate, "idempotency-rabbitmq-race-test:");
 
         IdempotencyProperties properties = new IdempotencyProperties();
         properties.setDefaultStore(RedisIdempotencyStore.QUALIFIER);
