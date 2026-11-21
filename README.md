@@ -206,6 +206,12 @@ only, not on a class):
 | `onStoreFailure`       | What to do when the store is unreachable. `OPEN` runs the handler unprotected, `CLOSED` rejects (`503` for HTTP, redelivery for messaging). `DEFAULT` inherits the global setting. |
 | `whenInProgress`       | What to do with a duplicate that arrives while the first request is still running. `REJECT` fails it (`409` for HTTP, redelivery for messaging). `WAIT` blocks until the first request finishes (HTTP only; rejected at startup on a listener). `DEFAULT` inherits the global setting. |
 
+**Duration format.** `ttl` and the `idempotency.*` duration properties accept the
+same formats as Spring Boot's own durations. Either a number with a unit:
+`500ms`, `30s`, `5m`, `1h`, `2d` (units `ns`, `us`, `ms`, `s`, `m`, `h`, `d`;
+a bare number such as `30` means **milliseconds**), or an ISO-8601 duration:
+`PT30S`, `PT1H`, `P1D`. An unparseable value fails startup (below).
+
 Every attribute with a global default can be set once under `idempotency.*`
 ([9. Configuration reference](#9-configuration-reference)) and overridden per
 handler. A misconfigured `@Idempotent` fails **application startup**, not the first
@@ -1024,7 +1030,7 @@ collision` (a bug in the caller).
 
 Every setting has a default except `idempotency.default-store`, so a working
 setup needs only that one. Durations take Spring Boot formats (`30s`, `5m`,
-`PT30S`) and sizes take `1MB`-style values.
+`PT30S`; a bare number is milliseconds, see [3.3](#33-the-idempotent-annotation)) and sizes take `1MB`-style values.
 
 ### 9.1. Global settings
 
