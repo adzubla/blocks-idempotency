@@ -53,9 +53,9 @@ import java.util.TreeMap;
  * {@code postgres}, whose reservation is a thread-bound transaction (startup
  * validation rejects that combination).
  *
- * <p>Slice 001-012 scope: header or body-field key strategy (whichever
+ * <p>Key resolution: header or body-field key strategy (whichever
  * annotation attribute is non-empty - exactly one is guaranteed by startup
- * validation, Slice 010). {@link PolicyResolver} settles {@code store}/{@code
+ * validation). {@link PolicyResolver} settles {@code store}/{@code
  * ttl}/{@code onStoreFailure}/{@code whenInProgress}/{@code keyRequired} per
  * request; {@code store} routes to the matching engine via {@link
  * IdempotencyEngineRegistry}, and every other attribute is consumed by
@@ -107,7 +107,7 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
 
         IdempotencyPolicy policy = PolicyResolver.resolve(annotation, properties);
 
-        // Exactly one of header()/fieldPath() is set - validated at startup (Slice 010). A header
+        // Exactly one of header()/fieldPath() is set - validated at startup. A header
         // key is resolved (and below, validated) before the body is touched, so a request that's
         // rejected or passed through for its key alone never has its body buffered.
         byte[] body = annotation.header().isEmpty() ? requestBody(request) : null;
@@ -134,7 +134,7 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
 
         EffectiveKey key = HttpEffectiveKeyFactory.create(request, rawKey.get(), properties.getScope().isPrincipalEnabled(),
                 properties.getScope().getPrincipalClaim(), principalClaimResolver);
-        // The fingerprint's target is the route plus the canonical query (issue 060); the
+        // The fingerprint's target is the route plus the canonical query; the
         // effective key's route stays the bare path.
         String fingerprintTarget = key.route() + canonicalQuery(request);
         String fingerprint = Fingerprint.sha256(fingerprintTarget, key.handler(), body);

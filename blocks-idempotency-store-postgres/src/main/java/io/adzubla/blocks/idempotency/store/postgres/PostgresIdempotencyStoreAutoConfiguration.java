@@ -27,8 +27,8 @@ import org.springframework.transaction.PlatformTransactionManager;
  * <p>Also registers {@link PostgresStoreProperties} ({@code idempotency.postgres.*}
  * - {@code lock-timeout}, {@code cleanup.*}) and, unless {@code
  * idempotency.postgres.cleanup.enabled=false}, the {@link
- * PostgresIdempotencyCleanupJob} bean that sweeps expired rows (Slice 018 -
- * Postgres has no native TTL). The job manages its own schedule rather than
+ * PostgresIdempotencyCleanupJob} bean that sweeps expired rows (Postgres
+ * has no native TTL). The job manages its own schedule rather than
  * relying on {@code @Scheduled}/{@code TaskScheduler}, so it needs nothing
  * further wired here.
  */

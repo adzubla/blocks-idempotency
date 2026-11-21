@@ -41,7 +41,7 @@ import org.springframework.context.annotation.Bean;
  * on the {@link IdempotencyEngineRegistry} bean registered here via the same
  * {@code @AutoConfigureAfter}/{@code @ConditionalOnBean} technique.
  *
- * <p>{@link IdempotencyMetrics} (Slice 011) resolves to {@link
+ * <p>{@link IdempotencyMetrics} resolves to {@link
  * MicrometerIdempotencyMetrics} when {@code idempotency.metrics.enabled}
  * (default {@code true}) and a {@link MeterRegistry} bean are both present,
  * otherwise to {@link NoOpIdempotencyMetrics}. The registry is looked up when

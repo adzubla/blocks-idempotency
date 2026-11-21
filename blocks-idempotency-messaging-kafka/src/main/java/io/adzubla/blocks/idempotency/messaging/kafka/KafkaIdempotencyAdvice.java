@@ -30,7 +30,7 @@ import java.util.Optional;
  * <p>The broker-neutral decision skeleton (key resolution, fingerprinting, the
  * reserve/complete/release flow, and the full PRD §5 decision table) lives in
  * {@link AbstractMessagingIdempotencyAdvice}, shared with the RabbitMQ and JMS
- * modules since Slice 048. This class supplies only the Kafka-specific seams via a
+ * modules. This class supplies only the Kafka-specific seams via a
  * {@link KafkaMessageDelivery}: reading the header/body off a {@link
  * ConsumerRecord}, and the two terminal actions whose mechanism is
  * Kafka-specific.

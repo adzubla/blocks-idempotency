@@ -30,9 +30,7 @@ import java.util.Optional;
  * intercepted arguments to a {@link MessageDelivery} via {@link #deliveryOf};
  * everything below the seam - key resolution order, size/charset validation,
  * fingerprinting, the reserve/complete/release flow, and the decision table -
- * is identical across brokers and lives here (Slice 048, extracted from the
- * Kafka module's Slice 035-039 advice and the RabbitMQ module's Slice 043-044
- * advice, which had drifted into two copies of the same logic).
+ * is identical across brokers and lives here, so the brokers cannot drift apart.
  *
  * <p>The two terminal actions whose <em>mechanism</em> genuinely differs
  * between brokers - dead-lettering a poison message and rejecting a

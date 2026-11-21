@@ -10,8 +10,7 @@ import java.lang.reflect.Method;
 
 /**
  * JMS-specific specialization of {@link AbstractMessagingListenerValidator}
- * (Slice 051, mirroring the Kafka Slice 040 / RabbitMQ Slice 045 validators
- * onto the shared base from Slice 048): the shared {@code header}/{@code
+ * (the counterpart of the Kafka and RabbitMQ validators): the shared {@code header}/{@code
  * fieldPath}/{@code ttl}/{@code store}/WAIT checks and the bean-scanning
  * mechanism live in the base; this class supplies only the JMS-specific seams
  * - the {@code @JmsListener} marker, the {@link Message} parameter

@@ -21,6 +21,12 @@ public interface IdempotencyStore {
      * registers the key {@code IN_PROGRESS} with the given fingerprint and lock TTL,
      * and the result carries a fence token for the caller to echo back to
      * {@link #complete}/{@link #release}.
+     *
+     * @param key         the effective key to reserve
+     * @param fingerprint digest of the request, stored to detect key reuse with a different payload
+     * @param lockTtl     how long the reservation stays valid before it can be superseded
+     * @return {@code RESERVED} with a fence token, or {@code EXISTS} with the current record
+     * @throws StoreUnavailableException if the store cannot be reached
      */
     ReservationResult reserve(EffectiveKey key, String fingerprint, Duration lockTtl);
 
@@ -35,7 +41,13 @@ public interface IdempotencyStore {
         return true;
     }
 
-    /** Look up the current record, if any. */
+    /**
+     * Look up the current record, if any.
+     *
+     * @param key the effective key
+     * @return the record, or empty if none exists or it has expired
+     * @throws StoreUnavailableException if the store cannot be reached
+     */
     Optional<IdempotencyRecord> find(EffectiveKey key);
 
     /**
@@ -43,6 +55,10 @@ public interface IdempotencyStore {
      * A no-op if {@code fenceToken} no longer matches the current reservation (it
      * expired and was superseded) - see {@link ReservationResult}.
      *
+     * @param key         the effective key
+     * @param fenceToken  the token from {@link #reserve}
+     * @param response    the captured response, or {@link CachedResponse#empty()} when there is none
+     * @param responseTtl how long the completed record is kept
      * @throws EffectRolledBackException if this store owns the effect's
      *         transaction and it could not be committed - the effect did not happen
      */
@@ -52,6 +68,9 @@ public interface IdempotencyStore {
      * Release the reservation (e.g. after a non-2xx), so a genuine retry can proceed.
      * A no-op if {@code fenceToken} no longer matches the current reservation - see
      * {@link ReservationResult}.
+     *
+     * @param key        the effective key
+     * @param fenceToken the token from {@link #reserve}
      */
     void release(EffectiveKey key, String fenceToken);
 
@@ -80,6 +99,12 @@ public interface IdempotencyStore {
      * be measured on the same time base as the sleep. A wall clock that steps
      * would cut the wait short or stretch it; a fake {@code Clock} that never
      * advances would make it never end.
+     *
+     * @param key         the effective key to wait on
+     * @param waitTimeout longest to wait for a terminal state
+     * @param pollInterval base delay between polls (ignored by stores that block natively)
+     * @param pollJitter  extra random delay added to each poll, up to this much
+     * @return the completed record, the still-in-progress record on timeout, or empty if released or expired
      */
     default Optional<IdempotencyRecord> await(EffectiveKey key, Duration waitTimeout, Duration pollInterval, Duration pollJitter) {
         long deadline = System.nanoTime() + waitTimeout.toNanos();

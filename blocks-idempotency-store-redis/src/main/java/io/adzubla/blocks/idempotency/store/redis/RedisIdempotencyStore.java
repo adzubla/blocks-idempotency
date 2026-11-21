@@ -171,7 +171,7 @@ public class RedisIdempotencyStore implements IdempotencyStore {
                 toJson(response.headers()), bodyEncoded, hasBody ? "1" : "0", String.valueOf(responseTtl.toMillis())));
         if (!Long.valueOf(1L).equals(completed)) {
             // The record is gone or belongs to a fresher reservation - most likely
-            // this handler ran past lock-ttl and got reclaimed (Slice 032). The
+            // this handler ran past lock-ttl and got reclaimed. The
             // effect already happened; only caching it is lost, silently, unless
             // logged here.
             log.warn("Redis idempotency completion no-op for {} {} key={} - reservation gone or superseded "
@@ -185,8 +185,8 @@ public class RedisIdempotencyStore implements IdempotencyStore {
     }
 
     /**
-     * Translates a genuine Redis connection/timeout failure into {@link StoreUnavailableException}
-     * (Slice 015). {@code RedisSystemException} is a separate branch from {@code
+     * Translates a genuine Redis connection/timeout failure into {@link StoreUnavailableException}.
+     * {@code RedisSystemException} is a separate branch from {@code
      * DataAccessResourceFailureException} (its subtype {@code RedisConnectionFailureException} covers
      * a clean connection-refused/timeout), not a supertype of it - Spring Data Redis falls back to the
      * generic {@code RedisSystemException} whenever {@code LettuceExceptionConverter} can't classify the

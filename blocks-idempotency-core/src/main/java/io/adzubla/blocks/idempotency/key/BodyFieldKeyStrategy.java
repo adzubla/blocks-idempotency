@@ -20,9 +20,13 @@ public final class BodyFieldKeyStrategy {
     /**
      * Resolves the raw key from {@code fieldPath} over {@code body}, absent
      * when the path doesn't resolve to a scalar value: missing field,
-     * malformed JSON, or a match that is itself a JSON object/array (Slice
-     * 013 - a key must be a scalar identity, not a compound structure). A
-     * number or boolean match is coerced to its string form.
+     * malformed JSON, or a match that is itself a JSON object/array (a key must be a
+     * scalar identity, not a compound structure). A number or boolean match is
+     * coerced to its string form.
+     *
+     * @param body      the raw request or message body; may be {@code null} or empty
+     * @param fieldPath a JSONPath expression, e.g. {@code $.orderId}
+     * @return the key as a string, or empty if it cannot be resolved
      */
     public static Optional<String> resolve(byte[] body, String fieldPath) {
         if (body == null || body.length == 0) {

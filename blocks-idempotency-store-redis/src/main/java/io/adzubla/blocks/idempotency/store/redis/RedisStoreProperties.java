@@ -3,7 +3,7 @@ package io.adzubla.blocks.idempotency.store.redis;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * Redis-store-specific settings (Slice 015).
+ * Redis-store-specific settings.
  */
 @ConfigurationProperties(prefix = "idempotency.redis")
 public class RedisStoreProperties {

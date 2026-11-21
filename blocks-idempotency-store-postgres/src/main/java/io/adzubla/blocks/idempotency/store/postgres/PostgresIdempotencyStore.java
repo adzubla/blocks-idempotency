@@ -60,7 +60,7 @@ import java.util.UUID;
  * the conditional {@code DO UPDATE} instead. See ADR 0003's consequences.
  *
  * <p>The blocking wait above is bounded by {@code lock_timeout} (ADR
- * 0001/0002/Slice 018): {@code reserve()} sets it for its own transaction
+ * 0001/0002): {@code reserve()} sets it for its own transaction
  * before attempting the reservation, so a waiter gives up rather than holding
  * its thread indefinitely if the row's owner neither commits nor rolls back in
  * time. A lock-timeout error is fenced through as an ordinary {@code
@@ -264,7 +264,7 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
     /**
      * {@code false}: the reservation is the reserving thread's open, thread-bound transaction,
      * so an asynchronous handler that finishes on another thread could never commit or roll it
-     * back - and would leave it bound to a pooled servlet thread (issue 064).
+     * back - and would leave it bound to a pooled servlet thread.
      */
     @Override
     public boolean supportsAsyncHandlers() {
@@ -459,7 +459,7 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
 
     /**
      * Rolls back a reservation for a <em>different</em> key still bound to this
-     * thread when a new {@code reserve()} begins (issue 033). In the supported
+     * thread when a new {@code reserve()} begins. In the supported
      * synchronous model {@code complete()}/{@code release()} always resolve a
      * reservation before its thread serves anything else, so a leftover scope
      * for another key means one was never resolved - an async or thread-hopping
@@ -509,7 +509,7 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
     /**
      * Stores a key component verbatim when it fits its column, and otherwise as
      * {@code sha256:<hex>} of its UTF-8 bytes (71 characters, which fits every
-     * key column) - issue 061. The route (request URI), principal (a token
+     * key column). The route (request URI), principal (a token
      * claim) and listener id are unbounded, and {@code idempotency.key.max-length}
      * may exceed 255; inserting such a value verbatim fails with SQLState 22001,
      * a raw 500 that bypasses {@code onStoreFailure}. The mapping is

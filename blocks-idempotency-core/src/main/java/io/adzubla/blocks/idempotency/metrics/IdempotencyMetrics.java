@@ -24,22 +24,28 @@ package io.adzubla.blocks.idempotency.metrics;
  */
 public interface IdempotencyMetrics {
 
+    /** A completed record was replayed ({@code outcome=replay}). */
     void recordReplay(String route, String handler);
 
+    /** The key was reused with a different payload ({@code outcome=collision}). */
     void recordCollision(String route, String handler);
 
+    /** A concurrent duplicate found the key in progress and was rejected or timed out ({@code outcome=concurrency}). */
     void recordConcurrency(String route, String handler);
 
+    /** The store was unavailable and the call proceeded unprotected ({@code outcome=fail_open}). */
     void recordFailOpen(String route, String handler);
 
+    /** The store was unavailable and the call was refused ({@code outcome=fail_closed}). */
     void recordFailClosed(String route, String handler);
 
+    /** A completed record had no replayable response ({@code outcome=response_unavailable}). */
     void recordResponseUnavailable(String route, String handler);
 
     /**
      * A duplicate delivery of an already-processed key was skipped (the messaging
      * counterpart of a replay: there is no response to replay). A routine outcome,
-     * not an error.
+     * not an error ({@code outcome=duplicate_skipped}).
      */
     void recordDuplicateSkipped(String route, String handler);
 }

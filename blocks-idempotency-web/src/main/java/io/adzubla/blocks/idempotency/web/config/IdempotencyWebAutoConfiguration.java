@@ -25,7 +25,7 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandl
 
 /**
  * HTTP/Servlet auto-configuration: registers the {@link IdempotentHandlerValidator}
- * (Slice 010 - fails startup fast on a misconfigured {@code @Idempotent}
+ * (fails startup fast on a misconfigured {@code @Idempotent}
  * handler, including one whose store qualifier resolves to no bean at all),
  * the {@link IdempotencyFilter}, {@link IdempotencyInterceptor}, and the
  * default {@link IdempotencyExceptionHandler} that translates the

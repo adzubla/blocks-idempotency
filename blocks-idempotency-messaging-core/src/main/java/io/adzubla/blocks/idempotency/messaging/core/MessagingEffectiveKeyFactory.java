@@ -11,10 +11,8 @@ import io.adzubla.blocks.idempotency.model.EffectiveKey;
  * {@link EffectiveKey#NO_PRINCIPAL} — no servlet-principal equivalent exists
  * for a message listener (per the messaging-extension PRD, v1 scope).
  *
- * <p>Extracted (Slice 048) from the per-broker {@code KafkaEffectiveKeyFactory}
- * / {@code RabbitEffectiveKeyFactory}, which differed only in the name of the
- * {@code destination} argument (topic vs. queue) — genuinely shared, not
- * broker-specific.
+ * <p>Shared by every broker: the only per-broker difference is the name of the
+ * {@code destination} argument (topic vs. queue).
  */
 public final class MessagingEffectiveKeyFactory {
 

@@ -21,11 +21,12 @@ import java.util.Optional;
  * reserve, branch on key lifecycle, execute or replay, complete on 2xx.
  * Framework-free; depends only on the store and model abstractions.
  *
- * <p>Slice 001-004, 007-011 scope: fresh-reservation, completed-replay,
- * fingerprint-mismatch (collision), concurrent in-progress (reject or, under
- * {@code whenInProgress=WAIT}, poll-and-wait), error-release,
- * store-failure-posture, TTL-expiry, completed-but-not-replayable ({@code
- * response_unavailable}), and outcome-metrics branches.
+ * <p>Branches handled: fresh reservation, completed replay, fingerprint
+ * mismatch (collision), concurrent in-progress (reject or, under {@code
+ * whenInProgress=WAIT}, poll-and-wait), error release, store-failure posture,
+ * TTL expiry, completed-but-not-replayable ({@code response_unavailable}),
+ * completed-with-no-response duplicate ({@code AlreadyProcessed}, messaging),
+ * and outcome metrics.
  */
 public class IdempotencyEngine {
 
@@ -39,15 +40,20 @@ public class IdempotencyEngine {
     private final Duration pollJitter;
     private final IdempotencyMetrics metrics;
 
+    /** Engine with the default WAIT polling (100 ms plus up to 50 ms jitter) and no metrics. */
     public IdempotencyEngine(IdempotencyStore store) {
         this(store, DEFAULT_POLL_INTERVAL, DEFAULT_POLL_JITTER, NoOpIdempotencyMetrics.INSTANCE);
     }
 
+    /** Engine with the default WAIT polling (100 ms plus up to 50 ms jitter) that records outcomes to {@code metrics}. */
     public IdempotencyEngine(IdempotencyStore store, IdempotencyMetrics metrics) {
         this(store, DEFAULT_POLL_INTERVAL, DEFAULT_POLL_JITTER, metrics);
     }
 
     /**
+     * Engine with custom WAIT polling and no metrics.
+     *
+     * @param store        the store holding reservations and cached responses
      * @param pollInterval base delay between WAIT-mode polls (ADR 0002: "~100ms")
      * @param pollJitter   extra random delay added to each poll, up to this much (ADR 0002: "with jitter")
      */
@@ -55,6 +61,14 @@ public class IdempotencyEngine {
         this(store, pollInterval, pollJitter, NoOpIdempotencyMetrics.INSTANCE);
     }
 
+    /**
+     * Engine with custom WAIT polling that records outcomes to {@code metrics}.
+     *
+     * @param store        the store holding reservations and cached responses
+     * @param pollInterval base delay between WAIT-mode polls
+     * @param pollJitter   extra random delay added to each poll, up to this much
+     * @param metrics      receives one outcome per decision made by {@link #before}
+     */
     public IdempotencyEngine(IdempotencyStore store, Duration pollInterval, Duration pollJitter, IdempotencyMetrics metrics) {
         this.store = store;
         this.pollInterval = pollInterval;
@@ -62,6 +76,22 @@ public class IdempotencyEngine {
         this.metrics = metrics;
     }
 
+    /**
+     * Decides what to do with a request or delivery before the effect runs: reserves
+     * the key and, if it is already held, branches on the existing record (collision,
+     * replay, already processed, response unavailable, or concurrent in-progress,
+     * which is rejected or awaited per {@code whenInProgress}). A store outage is
+     * resolved here by {@code onStoreFailure}, so this method does not throw for it.
+     *
+     * @param key             the effective key (scope plus key value)
+     * @param fingerprint     digest of the request used to detect key reuse with a different payload
+     * @param lockTtl         how long the reservation stays valid while the effect runs
+     * @param onStoreFailure  posture applied if the store is unavailable
+     * @param whenInProgress  whether a concurrent duplicate is rejected or waits
+     * @param waitTimeout     longest a {@code WAIT} duplicate holds its thread
+     * @return the decision the caller must act on; {@code Proceed} carries the fence
+     *         token to pass back to {@link #complete} or {@link #release}
+     */
     public EngineDecision before(EffectiveKey key, String fingerprint, Duration lockTtl, OnStoreFailure onStoreFailure,
             WhenInProgress whenInProgress, Duration waitTimeout) {
         ReservationResult result;
@@ -121,15 +151,15 @@ public class IdempotencyEngine {
     }
 
     /**
-     * {@code Unavailable} means different things to different callers: for
-     * HTTP it's a terminal error (a body over {@code max-body-size}, or the
-     * capture filter missing from the chain - see {@link CachedResponse}), surfaced to the client as
-     * a non-retryable 409. A caller that always completes a record with
-     * {@link CachedResponse#empty()} (no response to cache at all - the
-     * Kafka/RabbitMQ/JMS messaging advice, per ADR 0004) sees every completed
-     * duplicate resolve to {@code AlreadyProcessed}, never {@code Replay} or
-     * {@code Unavailable} - the routine "skip this duplicate" outcome, counted
-     * as {@code duplicate_skipped} rather than as an error.
+     * Maps a completed record to a decision: {@code Replay} when it holds a
+     * body; {@code AlreadyProcessed} when it was completed with {@link
+     * CachedResponse#empty()} (a caller with no response to cache - the
+     * Kafka/RabbitMQ/JMS messaging advice, per ADR 0004), the routine "skip this
+     * duplicate" outcome counted as {@code duplicate_skipped}; otherwise
+     * {@code Unavailable}, the terminal error for an HTTP response that should
+     * have been replayable but wasn't (a body over {@code max-body-size}, or the
+     * capture filter missing from the chain - see {@link CachedResponse}),
+     * surfaced as a non-retryable 409.
      */
     private EngineDecision decisionForCompleted(EffectiveKey key, CachedResponse response) {
         if (response != null && response.hasBody()) {
@@ -175,6 +205,11 @@ public class IdempotencyEngine {
      * (the effect ran, only its caching is lost); an {@link
      * io.adzubla.blocks.idempotency.store.EffectRolledBackException} is not -
      * the store rolled the effect back, so the caller must not report success.
+     *
+     * @param key         the key returned in the {@code Proceed} decision
+     * @param fenceToken  the token returned in the {@code Proceed} decision
+     * @param response    the captured response, or {@link CachedResponse#empty()} when there is none
+     * @param responseTtl how long the completed record is kept
      */
     public void complete(EffectiveKey key, String fenceToken, CachedResponse response, Duration responseTtl) {
         try {
@@ -191,7 +226,14 @@ public class IdempotencyEngine {
         }
     }
 
-    /** Releases the reservation (non-2xx or thrown exception), so a genuine retry re-executes. */
+    /**
+     * Releases the reservation (non-2xx or thrown exception), so a genuine retry
+     * re-executes. A {@link StoreUnavailableException} is swallowed: the reservation
+     * then simply expires after its lock TTL.
+     *
+     * @param key        the key returned in the {@code Proceed} decision
+     * @param fenceToken the token returned in the {@code Proceed} decision
+     */
     public void release(EffectiveKey key, String fenceToken) {
         try {
             store.release(key, fenceToken);

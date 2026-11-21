@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Deletes {@code idempotency_record} rows past {@code expires_at} on a fixed
  * delay - the configured interval elapses between the end of one sweep and the
- * start of the next (Slice 018) - Postgres has no native TTL (unlike Redis), so
+ * start of the next. Postgres has no native TTL (unlike Redis), so
  * completed or abandoned reservations would otherwise accumulate in the table
  * forever.
  *
@@ -27,7 +27,7 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Each sweep deletes in bounded batches, each its own short auto-committed
  * statement, rather than one {@code DELETE} of everything expired. That avoids
- * long-running deletes and WAL spikes at volume (issue 066). {@code FOR UPDATE SKIP
+ * long-running deletes and WAL spikes at volume. {@code FOR UPDATE SKIP
  * LOCKED} makes a batch skip rows another transaction holds - an expired row an open
  * reservation is currently superseding, or rows a concurrent sweep from another
  * instance already claimed - instead of waiting on them. A skipped row is deleted

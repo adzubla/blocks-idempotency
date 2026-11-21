@@ -10,7 +10,7 @@ import org.springframework.kafka.core.KafkaTemplate;
  * ".DLT"} - the same convention Spring Kafka's own {@code
  * DeadLetterPublishingRecoverer} defaults to) instead of invoking the
  * listener - the terminal cases from the PRD §5 action-mapping table
- * (collision, Slice 036; missing/invalid key, Slice 039) where no
+ * (collision, missing/invalid key) where no
  * consumer-side retry can resolve the delivery.
  *
  * <p>Holds the application's {@link KafkaTemplate} as a raw type

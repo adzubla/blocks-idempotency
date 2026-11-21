@@ -11,7 +11,7 @@ import java.util.concurrent.ThreadLocalRandom;
  *
  * <p>An interrupt ends the sleep early: {@link #sleep} returns {@code false}
  * and leaves the thread's interrupt status set, so the caller can stop waiting
- * and its own caller still sees the interrupt (issue 030).
+ * and its own caller still sees the interrupt.
  */
 final class PollJitter {
 

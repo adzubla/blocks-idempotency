@@ -122,7 +122,7 @@ public class IdempotentHandlerValidator implements SmartInitializingSingleton {
      * Rejects an asynchronous handler on a store whose reservation is bound to the reserving
      * thread ({@link IdempotencyStore#supportsAsyncHandlers()} - Postgres): the handler would
      * finish on another thread, its result would never be committed, and the open reservation
-     * would stay bound to a pooled servlet thread (issue 064).
+     * would stay bound to a pooled servlet thread.
      */
     private void validateAsyncSupport(Method method, Idempotent annotation, Map<String, IdempotencyStore> storesByQualifier) {
         String qualifier = annotation.store().isEmpty() ? properties.getDefaultStore() : annotation.store();

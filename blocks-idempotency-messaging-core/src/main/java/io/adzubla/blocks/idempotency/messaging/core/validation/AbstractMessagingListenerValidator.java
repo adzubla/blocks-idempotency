@@ -23,10 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * any {@code @Idempotent} listener method is misconfigured. The same {@code
  * header}/{@code fieldPath}/{@code ttl}/{@code store} checks {@code
  * IdempotentHandlerValidator} enforces for HTTP, plus the WAIT-rejection rule
- * from {@code docs/adr/0005-messaging-wait-disabled.md}, all live here (Slice
- * 048, extracted from the Kafka module's Slice 040 validator and the RabbitMQ
- * module's Slice 045 validator, which had become two copies of the same
- * checks).
+ * from {@code docs/adr/0005-messaging-wait-disabled.md}, all live here, shared by every broker module.
  *
  * <p>The genuinely broker-specific pieces are left to subclass seams: which
  * listener annotation marks a method ({@link #isListenerMethod}), the

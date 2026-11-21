@@ -21,8 +21,7 @@ import org.springframework.kafka.core.KafkaTemplate;
  * Kafka messaging auto-configuration: registers the {@link
  * KafkaIdempotencyAdvice} bean that intercepts every {@code @Idempotent} +
  * {@code @KafkaListener} method, plus the {@link KafkaDeadLetterPublisher} it
- * uses for terminal deliveries (collision, Slice 036; missing/invalid key,
- * Slice 039).
+ * uses for terminal deliveries (collision, missing/invalid key).
  *
  * <p>{@code @AutoConfigureAfter(IdempotencyAutoConfiguration.class)} paired
  * with {@code @ConditionalOnBean(IdempotencyEngineRegistry.class)} mirrors
@@ -37,7 +36,7 @@ import org.springframework.kafka.core.KafkaTemplate;
  * collision actually occurs, rather than blocking every {@code @Idempotent}
  * listener from being registered at all.
  *
- * <p>Also registers the {@link KafkaIdempotentListenerValidator} (Slice 040)
+ * <p>Also registers the {@link KafkaIdempotentListenerValidator}
  * that fails startup fast on a misconfigured {@code @Idempotent}
  * {@code @KafkaListener} method, including {@code whenInProgress=WAIT}
  * (ADR 0005) and one whose store qualifier resolves to no bean at all.

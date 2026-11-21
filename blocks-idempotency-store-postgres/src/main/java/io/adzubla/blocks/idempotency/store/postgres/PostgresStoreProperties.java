@@ -5,7 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import java.time.Duration;
 
 /**
- * Postgres-store-specific settings (Slice 018) - distinct from {@code
+ * Postgres-store-specific settings, distinct from {@code
  * idempotency.lock-ttl} (the reservation's own staleness TTL, {@code
  * IdempotencyProperties}, store-agnostic): these instead bound the native
  * concurrency mechanism that's unique to this store (ADR 0001/0002/0003) and

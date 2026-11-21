@@ -16,19 +16,24 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * In-memory {@link IdempotencyStore}, the reusable test double for every
- * slice: an atomic {@code reserve} via {@code compute}, TTL-aware (Slice 008
- * - a record past its {@code lockTtl}/{@code responseTtl} is treated as
- * absent, so a repeat re-executes exactly as a brand-new key would; the
- * {@link Clock} is injectable so tests can advance time), fence-tokened
- * (Slice 008 - {@code complete}/{@code release} no-op if the caller's token
- * no longer matches the current reservation, so a primary whose lock already
- * expired and was superseded can't clobber the new primary's record), no
- * native wait support (Slice 009 - inherits {@link IdempotencyStore}'s
- * default {@code await()}, which polls {@link #find}). {@link #setUnavailable}
- * simulates an outage (Slice 007 -
- * every operation throws {@link StoreUnavailableException}) for exercising
- * the {@code onStoreFailure} posture.
+ * In-memory {@link IdempotencyStore}, for tests and single-instance use (state
+ * is per JVM, so it does not deduplicate across instances; register it with
+ * {@code @Bean(InMemoryIdempotencyStore.QUALIFIER)}). Properties:
+ * <ul>
+ *   <li>an atomic {@code reserve} via {@code compute};</li>
+ *   <li>TTL-aware: a record past its {@code lockTtl}/{@code responseTtl} is
+ *       treated as absent, so a repeat re-executes exactly as a brand-new key
+ *       would; the {@link Clock} is injectable so tests can advance time;</li>
+ *   <li>fence-tokened: {@code complete}/{@code release} no-op if the caller's
+ *       token no longer matches the current reservation, so a primary whose
+ *       lock already expired and was superseded can't clobber the new
+ *       primary's record;</li>
+ *   <li>no native wait support: inherits {@link IdempotencyStore}'s default
+ *       {@code await()}, which polls {@link #find};</li>
+ *   <li>{@link #setUnavailable} simulates an outage (every operation throws
+ *       {@link StoreUnavailableException}) for exercising the {@code
+ *       onStoreFailure} posture.</li>
+ * </ul>
  */
 public class InMemoryIdempotencyStore implements IdempotencyStore {
 

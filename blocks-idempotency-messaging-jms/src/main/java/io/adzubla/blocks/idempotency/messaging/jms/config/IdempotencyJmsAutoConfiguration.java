@@ -21,7 +21,7 @@ import org.springframework.jms.core.JmsTemplate;
  * JMS messaging auto-configuration: registers the {@link JmsIdempotencyAdvice}
  * bean that intercepts every {@code @Idempotent} + {@code @JmsListener}
  * method, plus the {@link JmsDeadLetterPublisher} it uses for terminal
- * deliveries (collision, missing/invalid key - Slice 050).
+ * deliveries (collision, missing/invalid key).
  *
  * <p>{@code @AutoConfigureAfter(IdempotencyAutoConfiguration.class)} paired
  * with {@code @ConditionalOnBean(IdempotencyEngineRegistry.class)} mirrors
@@ -37,7 +37,7 @@ import org.springframework.jms.core.JmsTemplate;
  * collision actually occurs, rather than blocking every {@code @Idempotent}
  * listener from being registered at all.
  *
- * <p>Also registers the {@link JmsIdempotentListenerValidator} (Slice 051)
+ * <p>Also registers the {@link JmsIdempotentListenerValidator}
  * that fails startup fast on a misconfigured {@code @Idempotent}
  * {@code @JmsListener} method, including {@code whenInProgress=WAIT}
  * (ADR 0005) and one whose store qualifier resolves to no bean at all.

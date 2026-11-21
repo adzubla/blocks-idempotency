@@ -26,8 +26,8 @@ import org.springframework.context.annotation.Bean;
  * {@code IdempotencyEngineRegistry} bean exists, and the advice would
  * silently never get registered.
  *
- * <p>Also registers the {@link RabbitIdempotentListenerValidator} (Slice
- * 045) that fails startup fast on a misconfigured {@code @Idempotent}
+ * <p>Also registers the {@link RabbitIdempotentListenerValidator}
+ * that fails startup fast on a misconfigured {@code @Idempotent}
  * {@code @RabbitListener} method, including {@code whenInProgress=WAIT}
  * (ADR 0005) and one whose store qualifier resolves to no bean at all.
  */

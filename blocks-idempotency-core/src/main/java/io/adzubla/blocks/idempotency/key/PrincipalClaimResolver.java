@@ -12,6 +12,12 @@ import java.security.Principal;
 @FunctionalInterface
 public interface PrincipalClaimResolver {
 
-    /** Return {@code null} to fall back to {@link Principal#getName()}. */
+    /**
+     * Resolves the principal component of the effective key.
+     *
+     * @param principal the authenticated principal
+     * @param claim     the configured claim name ({@code idempotency.scope.principal-claim})
+     * @return the value to scope by, or {@code null} to fall back to {@link Principal#getName()}
+     */
     String resolve(Principal principal, String claim);
 }

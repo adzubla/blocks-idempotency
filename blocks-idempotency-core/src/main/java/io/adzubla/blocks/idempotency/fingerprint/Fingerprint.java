@@ -15,7 +15,7 @@ import java.util.HexFormat;
  * body, used to detect a key reused with a different payload (see
  * {@code CONTEXT.md} — Collision). The {@code route} is whatever the caller
  * passes: a message listener passes its destination, and the HTTP interceptor
- * passes the request path plus the canonical query string (issue 060), so the
+ * passes the request path plus the canonical query string, so the
  * same key with different query parameters is a collision, not a replay.
  *
  * <p>The body is parsed and re-serialized with object keys sorted
@@ -32,6 +32,14 @@ public final class Fingerprint {
     private Fingerprint() {
     }
 
+    /**
+     * Fingerprint of a request or delivery.
+     *
+     * @param route   the request path (plus canonical query) or message destination
+     * @param handler the handler identity
+     * @param body    the raw body; may be {@code null} or empty
+     * @return the SHA-256 as lowercase hex
+     */
     public static String sha256(String route, String handler, byte[] body) {
         byte[] digest = digestBytes(
                 route.getBytes(StandardCharsets.UTF_8),
@@ -44,6 +52,9 @@ public final class Fingerprint {
      * SHA-256 over {@code parts} joined with a {@code NUL} separator - the digest
      * shape shared by this class's own {@link #sha256} and by
      * {@code EffectiveKey.digestBytes()}.
+     *
+     * @param parts the byte sequences to digest, in order
+     * @return the 32-byte digest
      */
     public static byte[] digestBytes(byte[]... parts) {
         try {

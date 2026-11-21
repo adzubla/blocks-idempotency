@@ -14,6 +14,15 @@ public final class EffectiveKeyFactory {
     private EffectiveKeyFactory() {
     }
 
+    /**
+     * Builds an effective key from already-resolved components.
+     *
+     * @param route     the request path or message destination
+     * @param handler   the handler identity
+     * @param principal the principal scope, or {@code EffectiveKey.NO_PRINCIPAL}
+     * @param value     the raw idempotency key value
+     * @return the effective key
+     */
     public static EffectiveKey create(String route, String handler, String principal, String value) {
         return new EffectiveKey(route, handler, principal, value);
     }

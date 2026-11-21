@@ -14,6 +14,10 @@ package io.adzubla.blocks.idempotency.store;
  */
 public class EffectRolledBackException extends RuntimeException {
 
+    /**
+     * @param message description of the failed commit
+     * @param cause   the underlying commit failure
+     */
     public EffectRolledBackException(String message, Throwable cause) {
         super(message, cause);
     }
