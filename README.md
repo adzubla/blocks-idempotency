@@ -410,7 +410,7 @@ Kafka/RabbitMQ/JMS). What happens to each kind of arrival:
 | Duplicate while the first is still running | `409` with `Retry-After`, or it waits for the result with `whenInProgress = WAIT`. | Failed and redelivered later; the listener doesn't run. |
 | Same key, different payload | `422` | Dead-lettered. |
 | Missing or invalid key | `400` (a missing key passes through unprotected with `keyRequired = false`) | Dead-lettered (same exception). |
-| Store unreachable | Runs unprotected (`onStoreFailure = OPEN`) or `503` (`CLOSED`). | Runs unprotected, or left un-acked for redelivery. |
+| Store unreachable | Runs unprotected (`onStoreFailure = OPEN`) or `503` (`CLOSED`). | Runs unprotected (`OPEN`), or with `CLOSED` the listener isn't invoked: Kafka and JMS leave the message un-acked for redelivery, RabbitMQ rejects it without requeue. |
 
 The HTTP status codes and headers are listed in [5.1](#51-web), and the broker
 behavior in [5.2](#52-kafka) to [5.5](#55-shared-messaging-behavior).
@@ -564,8 +564,11 @@ idempotency.kafka.dead-letter-suffix=.DLT
 #### Behavior
 
 A collision or invalid/missing key republishes the message to
-`<topic><dead-letter-suffix>` (default `.DLT`) via an optionally-injected
-`KafkaTemplate`, then acks/skips the original. Duplicates, in-progress
+`<topic><dead-letter-suffix>` (default `.DLT`) via your application's
+`KafkaTemplate`, then acks/skips the original. The template bean is optional at
+startup but needed the first time a delivery has to be dead-lettered: without one,
+that delivery fails with `IllegalStateException` and goes through the container's
+error handling instead of being skipped. Duplicates, in-progress
 deliveries and `WAIT` are covered in
 [Shared messaging behavior](#55-shared-messaging-behavior).
 
@@ -626,8 +629,11 @@ idempotency.jms.dead-letter-suffix=.DLQ
 #### Behavior
 
 A collision or invalid/missing key republishes the message to
-`<destination><dead-letter-suffix>` (default `.DLQ`) via an
-optionally-injected `JmsTemplate`, then acks/skips the original. Duplicates, in-progress
+`<destination><dead-letter-suffix>` (default `.DLQ`) via your application's
+`JmsTemplate`, then acks/skips the original. As with Kafka, the template bean is
+needed the first time a delivery has to be dead-lettered; without one, that
+delivery fails with `IllegalStateException` and is redelivered or handled by the
+container. Duplicates, in-progress
 deliveries and `WAIT` are covered in
 [Shared messaging behavior](#55-shared-messaging-behavior).
 
@@ -688,6 +694,10 @@ HTTP behavior described in the [Web](#51-web) section:
   dead-letter topic/queue instead of a `422`/`400` response — Kafka and JMS
   republish it themselves; RabbitMQ relies on the broker's own dead-letter
   configuration via a reject-without-requeue.
+- **A store outage with `onStoreFailure = CLOSED` never invokes the listener.**
+  Kafka and JMS leave the message un-acked, so the broker redelivers it.
+  RabbitMQ rejects it without requeue, so it is dead-lettered (or dropped) per
+  the queue's own configuration. With `OPEN` the listener runs unprotected.
 - **The effective key has no principal.** Its scope is destination
   (topic/queue) + listener id + key value, since there's no HTTP-style
   authenticated principal in a message delivery.
