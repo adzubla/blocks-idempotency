@@ -111,15 +111,6 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- Test: bounds RabbitMQ listener redelivery (RetryInterceptorBuilder needs spring-retry,
-             which Spring Boot 4 no longer manages) -->
-        <dependency>
-            <groupId>org.springframework.retry</groupId>
-            <artifactId>spring-retry</artifactId>
-            <version>2.0.13</version>
-            <scope>test</scope>
-        </dependency>
-
         <!-- Test: JMS end-to-end (embedded Artemis broker; AOP advice, engine, dead-letter publishing) -->
         <dependency>
             <groupId>io.adzubla.blocks</groupId>
