@@ -982,7 +982,9 @@ ResponseEntity<Receipt> pay(@RequestBody PaymentRequest request,
 
 The order row and the idempotency record commit together, so a retry can
 never see one without the other. `WAIT` makes a concurrent duplicate block until
-the first request finishes, then return its response.
+the first request finishes, then return its response. The wait is bounded
+(`idempotency.postgres.lock-timeout`, then `idempotency.wait-timeout`), after which
+the duplicate gets `409` with `Retry-After`.
 
 ```java
 @Transactional
@@ -1002,7 +1004,9 @@ duplicates ([6.4](#64-postgres)).
 
 The sender includes its own event id. Use it as the key instead of asking for a
 header, and keep the route authenticated so the key isn't shared by anonymous
-callers ([4.2](#42-choosing-an-idempotency-key)).
+callers ([4.2](#42-choosing-an-idempotency-key)). A sender that retries an event
+with a changed body (a new timestamp or attempt counter) gets `422 collision`
+rather than a replay, because the body is part of the fingerprint.
 
 ```java
 @PostMapping("/webhooks/payments")
@@ -1015,7 +1019,8 @@ ResponseEntity<Void> onEvent(@RequestBody PaymentEvent event) {
 
 ### 8.4. A Kafka consumer that must not process a message twice
 
-Use raw deserializers, accept the `ConsumerRecord`, and give redelivery of
+With Redis this is best-effort; use the Postgres store when the effect is a write to
+the same database. Use raw deserializers, accept the `ConsumerRecord`, and give redelivery of
 in-progress messages a backoff longer than `lock-ttl`.
 
 ```java
@@ -1040,10 +1045,10 @@ The key must be created once per operation and reused on every retry:
 String key = UUID.randomUUID().toString();          // once, before the first attempt
 for (int attempt = 1; ; attempt++) {
     ResponseEntity<Order> response = client.post("/orders", body, key);
-    if (response.getStatusCode().value() != 409 || attempt == 5) {
+    if (!response.getHeaders().containsKey("Retry-After") || attempt == 5) {
         return response;
     }
-    // 409 with Retry-After means "in progress": wait, then resend the same key.
+    // Retry-After (a 409) means "in progress": wait, then resend the same key.
     Thread.sleep(retryAfterMillis(response));
 }
 ```
