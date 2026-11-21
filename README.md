@@ -1223,14 +1223,17 @@ specific problem, or confirm that your keys aren't sensitive.
 
 | Symptom | Likely cause |
 |---------|--------------|
-| Application fails to start naming an `@Idempotent` handler | Both or neither of `header`/`fieldPath`, an invalid `ttl`, a `store` with no matching bean, `WAIT` on a messaging listener, a listener without a `ConsumerRecord`/`Message` parameter, or an async handler on the Postgres store. |
-| Every call executes the handler, with no errors | The store or transport module is missing from the classpath, so nothing is registered. Check the startup log for `Idempotency configuration valid: N @Idempotent endpoint(s) validated`. |
+| Application fails to start naming an `@Idempotent` handler | Both or neither of `header`/`fieldPath`, an invalid `ttl`, no store set or a `store` with no matching bean, `WAIT` on a messaging listener, a listener without a `ConsumerRecord`/`Message` parameter, or an async handler on the Postgres store. |
+| Every call executes the handler, with no errors | The transport module (`web` or a messaging module) is missing from the classpath, so `@Idempotent` is ignored; check the startup log for `Idempotency configuration valid: N @Idempotent endpoint(s) validated`. Or the caller sends no key and the handler has `keyRequired = false`, or the store is down with the default `onStoreFailure = OPEN` (`fail_open` metric, `WARN` logs). A missing store module fails startup instead. |
 | Retries are not recognized as retries | The client generates a new key on each attempt, or the key comes from a field that differs between attempts. |
 | `422 collision` on a legitimate retry | The body or query string changed between attempts (including a timestamp inside the body), or a `fieldPath` value isn't unique per intent. |
-| `409 response_unavailable` | The response was over `idempotency.max-body-size`. Not retryable. |
+| `409 response_unavailable` | The response was over `idempotency.max-body-size`, or the capture filter isn't in the filter chain (`WARN` in the log). Not retryable. |
+| `400 key_required` | The request has no key and the handler requires one (`keyRequired = true`, the default). |
+| `413 request_too_large` | The request body is over `idempotency.max-request-body-size`. |
+| `503 store_unavailable` | The store is unreachable and the handler has `onStoreFailure = CLOSED`. |
 | `409 in_progress` that never clears | The first request is still running, or it crashed. The key frees itself once `lock-ttl` expires. |
 | `400 key_invalid` | The key is longer than `idempotency.key.max-length` or contains characters outside `[A-Za-z0-9_.:-]`. |
 | `relation "idempotency_record" does not exist` on the Postgres store | The table was never created. Add it to your migrations ([6.4](#64-postgres)). |
-| Handler ran twice on Redis | `lock-ttl` is shorter than the handler, or Redis lost the key. Look for the `completion no-op` `WARN`. |
+| Handler ran twice on Redis | `lock-ttl` is shorter than the handler (look for the `completion no-op` `WARN`), Redis lost the key (eviction), or Redis was down with `onStoreFailure = OPEN`. |
 | `500` after a successful handler on Postgres | The commit failed and the effect was rolled back. A retry re-executes ([6.4](#64-postgres)). |
 | Messages requeued in a tight loop (RabbitMQ), or dropped after a few quick retries (Kafka default error handler) | A delivery whose key is still in progress has no retry backoff longer than `lock-ttl` ([5.5](#55-shared-messaging-behavior)). |
