@@ -257,14 +257,17 @@ For every request or delivery, the same sequence happens:
 3. **Reserve** the effective key in the configured store. A fresh key
    proceeds; a key already seen goes through the duplicate/collision/
    in-progress handling described in each transport section below.
-4. **Invoke the handler/listener method** exactly once for a fresh key.
+4. **Invoke the handler/listener method** for a fresh key, once per reservation. If
+   it fails, the key is released and a retry can run it again.
 5. **Complete or release** the reservation depending on the outcome — success
    caches the result (HTTP) or simply marks the delivery done (messaging);
    failure releases the key so a genuine retry can proceed.
 
-These five steps live in one transport-neutral core module; each transport (HTTP,
-Kafka, RabbitMQ, JMS) has a thin adapter that plugs its own request/delivery
-shape into the same underlying engine and store. That's why the behavior,
+The decisions (reserve, duplicate, collision, store failure) are made by one
+transport-neutral engine in the core module. Each transport (HTTP, Kafka,
+RabbitMQ, JMS) has a thin adapter that resolves the key, calls the engine and
+invokes your method, so its own request/delivery shape plugs into the same engine
+and store. That's why the behavior,
 configuration shape, and terminology are consistent everywhere you use
 `@Idempotent` — differences between transports are called out explicitly in
 each transport's own section further down, rather than being separate
@@ -335,8 +338,9 @@ A request always produces exactly one effective key — the two strategies
 above are not stacked checks, and they feed the same underlying mechanism
 under the same policy.
 
-**Fingerprint** is a separate, related concept: a hash of method/route (or
-destination) plus the normalized request/message body. For HTTP it also covers
+**Fingerprint** is a separate, related concept: a hash of the route (or
+destination), the handler (HTTP method or listener id) and the normalized
+request/message body. For HTTP it also covers
 the query string, with parameters in sorted order, so reusing a key with
 different query parameters is a collision. It's not part of the
 effective key — it's compared against what was stored for that key on a
@@ -405,7 +409,7 @@ Kafka/RabbitMQ/JMS). What happens to each kind of arrival:
 | Duplicate after the first finished, same payload | The cached response is replayed (`Idempotency-Replayed: true`). | Acked and skipped; the listener doesn't run. |
 | Duplicate while the first is still running | `409` with `Retry-After`, or it waits for the result with `whenInProgress = WAIT`. | Failed and redelivered later; the listener doesn't run. |
 | Same key, different payload | `422` | Dead-lettered. |
-| Missing or invalid key | `400` | Dead-lettered. |
+| Missing or invalid key | `400` (a missing key passes through unprotected with `keyRequired = false`) | Dead-lettered (same exception). |
 | Store unreachable | Runs unprotected (`onStoreFailure = OPEN`) or `503` (`CLOSED`). | Runs unprotected, or left un-acked for redelivery. |
 
 The HTTP status codes and headers are listed in [5.1](#51-web), and the broker
