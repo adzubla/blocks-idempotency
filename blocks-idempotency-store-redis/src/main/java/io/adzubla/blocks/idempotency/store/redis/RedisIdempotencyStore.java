@@ -20,6 +20,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.util.Base64;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
@@ -36,7 +37,8 @@ import java.util.function.Supplier;
  * (no cross-slot operations). Reserve and complete are single Lua scripts: Redis
  * runs each script to completion without interleaving any other command, so the
  * "does this key already exist" check and the write that follows it are atomic
- * with no separate locking needed. Lifecycle rides the key's own TTL - reserve →
+ * with no separate locking needed, and a conflicting reserve returns the
+ * existing record from the same script, so every operation is one round trip. Lifecycle rides the key's own TTL - reserve →
  * {@code lock-ttl} (a bare {@code PEXPIRE}, not a conditional supersession dance
  * like Postgres's: an expired key is simply gone from Redis, {@code EXISTS}
  * naturally reports it absent); complete → {@code response-ttl}; release → a
@@ -65,17 +67,22 @@ public class RedisIdempotencyStore implements IdempotencyStore {
     public static final String QUALIFIER = "redis";
 
     // KEYS[1] = record key. ARGV[1] = fingerprint, ARGV[2] = fence token,
-    // ARGV[3] = lock-ttl millis. Returns 1 (won) or 0 (a live record already
-    // exists - an expired one is simply absent from Redis, no separate
-    // supersession check needed, unlike Postgres's conditional DO UPDATE).
-    private static final RedisScript<Long> RESERVE_SCRIPT = RedisScript.of("""
+    // ARGV[3] = lock-ttl millis. Returns an empty list (won), or the live
+    // record's fields as HGETALL's flat [field, value, ...] list - read in the
+    // same atomic step, so a duplicate costs one round trip and the record
+    // can't vanish between the conflict check and the read. An expired record
+    // is simply absent from Redis, so no separate supersession check is needed,
+    // unlike Postgres's conditional DO UPDATE. A live record is never an empty
+    // hash: reserve always writes 'fingerprint' and 'token'.
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static final RedisScript<List<String>> RESERVE_SCRIPT = (RedisScript) RedisScript.of("""
             if redis.call('EXISTS', KEYS[1]) == 1 then
-                return 0
+                return redis.call('HGETALL', KEYS[1])
             end
             redis.call('HSET', KEYS[1], 'fingerprint', ARGV[1], 'token', ARGV[2])
             redis.call('PEXPIRE', KEYS[1], ARGV[3])
-            return 1
-            """, Long.class);
+            return {}
+            """, List.class);
 
     // KEYS[1] = record key. ARGV[1] = expected fence token, ARGV[2] = status,
     // ARGV[3] = headers JSON, ARGV[4] = Base64 body, ARGV[5] = "1"/"0" whether
@@ -110,16 +117,6 @@ public class RedisIdempotencyStore implements IdempotencyStore {
             """, Long.class);
 
     /**
-     * Bounded retries for the benign race where {@code reserve} loses the
-     * conflict but the existing record has already vanished (its lock-ttl
-     * expired, or it was released) by the re-read: the key is free now, so a
-     * retry wins. If it keeps racing past this bound, {@code reserve} surfaces
-     * {@link StoreUnavailableException} so the engine's {@code onStoreFailure}
-     * posture applies, rather than leaking a raw 500.
-     */
-    private static final int MAX_RESERVE_ATTEMPTS = 8;
-
-    /**
      * Serializes the cached response headers. A private mapper with default settings, not the
      * application's {@code ObjectMapper}: this JSON is the store's own persisted format, so the
      * application's Jackson configuration (default typing, mixins, naming) must not change it.
@@ -137,25 +134,13 @@ public class RedisIdempotencyStore implements IdempotencyStore {
     @Override
     public ReservationResult reserve(EffectiveKey key, String fingerprint, Duration lockTtl) {
         String redisKey = redisKey(key);
-        return guarded(() -> {
-            for (int attempt = 0; attempt < MAX_RESERVE_ATTEMPTS; attempt++) {
-                String fenceToken = UUID.randomUUID().toString();
-                Long won = redis.execute(RESERVE_SCRIPT, List.of(redisKey), fingerprint, fenceToken, String.valueOf(lockTtl.toMillis()));
-                if (Long.valueOf(1L).equals(won)) {
-                    return ReservationResult.reserved(fenceToken);
-                }
-                Optional<IdempotencyRecord> existing = findRecord(redisKey);
-                if (existing.isPresent()) {
-                    return ReservationResult.exists(existing.get());
-                }
-                // Lost the conflict but the record vanished (its lock-ttl
-                // expired, or it was released) between the script's EXISTS check
-                // and this re-read - the key is free now, so retry rather than
-                // failing.
-            }
-            throw new StoreUnavailableException(
-                    "reservation for " + key + " kept racing (lost the conflict but the record vanished on every retry)");
-        });
+        String fenceToken = UUID.randomUUID().toString();
+        List<String> existing = guarded(() ->
+                redis.execute(RESERVE_SCRIPT, List.of(redisKey), fingerprint, fenceToken, String.valueOf(lockTtl.toMillis())));
+        if (existing == null || existing.isEmpty()) {
+            return ReservationResult.reserved(fenceToken);
+        }
+        return ReservationResult.exists(mapRecord(toFieldMap(existing)).orElseThrow());
     }
 
     @Override
@@ -208,6 +193,15 @@ public class RedisIdempotencyStore implements IdempotencyStore {
     private Optional<IdempotencyRecord> findRecord(String redisKey) {
         Map<String, String> fields = redis.<String, String>opsForHash().entries(redisKey);
         return mapRecord(fields);
+    }
+
+    /** HGETALL's flat {@code [field, value, field, value, ...]} reply as a map. */
+    private static Map<String, String> toFieldMap(List<String> flat) {
+        Map<String, String> fields = new HashMap<>();
+        for (int i = 0; i + 1 < flat.size(); i += 2) {
+            fields.put(flat.get(i), flat.get(i + 1));
+        }
+        return fields;
     }
 
     private Optional<IdempotencyRecord> mapRecord(Map<String, String> fields) {

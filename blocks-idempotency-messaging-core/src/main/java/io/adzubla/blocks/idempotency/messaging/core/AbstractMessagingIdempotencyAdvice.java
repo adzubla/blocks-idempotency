@@ -9,6 +9,7 @@ import io.adzubla.blocks.idempotency.engine.RejectReason;
 import io.adzubla.blocks.idempotency.fingerprint.Fingerprint;
 import io.adzubla.blocks.idempotency.key.BodyFieldKeyStrategy;
 import io.adzubla.blocks.idempotency.key.KeyFormat;
+import io.adzubla.blocks.idempotency.model.Body;
 import io.adzubla.blocks.idempotency.model.CachedResponse;
 import io.adzubla.blocks.idempotency.model.EffectiveKey;
 import io.adzubla.blocks.idempotency.policy.IdempotencyPolicy;
@@ -75,7 +76,7 @@ public abstract class AbstractMessagingIdempotencyAdvice {
         MessageDelivery delivery = deliveryOf(joinPoint, method);
 
         IdempotencyPolicy policy = PolicyResolver.resolve(annotation, properties);
-        byte[] body = delivery.body();
+        Body body = Body.of(delivery.body());
 
         Optional<String> rawKey = annotation.header().isEmpty()
                 ? BodyFieldKeyStrategy.resolve(body, annotation.fieldPath())

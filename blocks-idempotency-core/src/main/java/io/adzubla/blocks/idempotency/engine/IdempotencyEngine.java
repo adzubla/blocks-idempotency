@@ -76,6 +76,11 @@ public class IdempotencyEngine {
         this.metrics = metrics;
     }
 
+    /** @return whether this engine's store commits the effect in {@code complete} (see {@link IdempotencyStore#commitsEffect()}) */
+    public boolean commitsEffect() {
+        return store.commitsEffect();
+    }
+
     /**
      * Decides what to do with a request or delivery before the effect runs: reserves
      * the key and, if it is already held, branches on the existing record (collision,

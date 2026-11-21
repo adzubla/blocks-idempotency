@@ -89,20 +89,44 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
     /** Bean qualifier used by {@code @Idempotent(store = ...)}. */
     public static final String QUALIFIER = "postgres";
 
-    private static final String UPSERT_RESERVATION = """
-            INSERT INTO idempotency_record
-                (route, handler, principal, idempotency_key, fingerprint, reservation_token, created_at, expires_at)
-            VALUES (?, ?, ?, ?, ?, ?, clock_timestamp(), clock_timestamp() + ?::interval)
-            ON CONFLICT (route, handler, principal, idempotency_key) DO UPDATE SET
-                fingerprint = EXCLUDED.fingerprint,
-                reservation_token = EXCLUDED.reservation_token,
-                response_status = NULL,
-                response_headers = NULL,
-                response_body = NULL,
-                created_at = EXCLUDED.created_at,
-                expires_at = EXCLUDED.expires_at
-            WHERE idempotency_record.expires_at < clock_timestamp()
-            RETURNING route
+    /**
+     * The reservation attempt, in one round trip: sets the store's {@code lock_timeout}
+     * for this transaction, runs the conditional upsert under it, and puts the caller's
+     * previous {@code lock_timeout} back - the handler then runs its own statements in
+     * this same transaction and must not inherit the store's timeout. Returns one row:
+     * {@code won} (1 if the reservation was inserted or superseded an expired row, 0 if
+     * a live record holds the key).
+     *
+     * <p>The order is enforced by data dependencies, not by evaluation order within a
+     * target list: {@code previous} is {@code MATERIALIZED} and the upsert reads its row
+     * as its source, so the store's timeout is in effect before the upsert can block on
+     * the key; the restoring {@code set_config} is projected from the join with the
+     * upsert's {@code count(*)}, which cannot produce a row until the upsert has finished.
+     * A lock-timeout error aborts the statement before the restore, and the caller rolls
+     * the transaction back, which discards the transaction-local setting anyway.
+     */
+    private static final String RESERVE = """
+            WITH previous AS MATERIALIZED (
+                SELECT current_setting('lock_timeout') AS value, set_config('lock_timeout', ?, true) AS applied
+            ),
+            reservation AS (
+                INSERT INTO idempotency_record
+                    (route, handler, principal, idempotency_key, fingerprint, reservation_token, created_at, expires_at)
+                SELECT ?, ?, ?, ?, ?, ?, clock_timestamp(), clock_timestamp() + ?::interval
+                FROM previous
+                ON CONFLICT (route, handler, principal, idempotency_key) DO UPDATE SET
+                    fingerprint = EXCLUDED.fingerprint,
+                    reservation_token = EXCLUDED.reservation_token,
+                    response_status = NULL,
+                    response_headers = NULL,
+                    response_body = NULL,
+                    created_at = EXCLUDED.created_at,
+                    expires_at = EXCLUDED.expires_at
+                WHERE idempotency_record.expires_at < clock_timestamp()
+                RETURNING route
+            )
+            SELECT attempt.won, set_config('lock_timeout', previous.value, true) AS restored
+            FROM previous CROSS JOIN (SELECT count(*) AS won FROM reservation) attempt
             """;
 
     private static final String SELECT_RECORD = """
@@ -124,7 +148,7 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
      * transaction under MVCC, so a bare {@code SELECT} would see nothing and
      * return instantly rather than wait. Conflict detection on {@code INSERT
      * ... ON CONFLICT} is what actually blocks (the same primitive {@link
-     * #UPSERT_RESERVATION} uses). {@code DO NOTHING} rather than {@code DO
+     * #RESERVE} uses). {@code DO NOTHING} rather than {@code DO
      * UPDATE}: {@code await()} rolls back immediately if this "wins" (see
      * below), so what the conflict branch would have done never matters.
      */
@@ -135,22 +159,6 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
             ON CONFLICT (route, handler, principal, idempotency_key) DO NOTHING
             RETURNING route
             """;
-
-    /**
-     * Bounds the reservation's row-lock wait for the current transaction
-     * only (the {@code SET LOCAL} equivalent, but bindable), returning the
-     * value in effect before - {@link #reserve} restores it once the
-     * reservation is won, since the handler then runs its own statements in
-     * this same transaction and must not inherit the store's timeout. The
-     * {@code OFFSET 0} keeps the subquery from being flattened, so the old
-     * value is read before {@code set_config} replaces it.
-     */
-    private static final String SWAP_LOCK_TIMEOUT = """
-            SELECT previous.value, set_config('lock_timeout', ?, true)
-            FROM (SELECT current_setting('lock_timeout') AS value OFFSET 0) previous
-            """;
-
-    private static final String SET_LOCK_TIMEOUT = "SELECT set_config('lock_timeout', ?, true)";
 
     /** SQLState 55P03 ("lock_not_available") - raised when {@code lock_timeout} is exceeded. */
     private static final String SQLSTATE_LOCK_NOT_AVAILABLE = "55P03";
@@ -198,14 +206,13 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
         }
         String fenceToken = UUID.randomUUID().toString();
         try {
-            String callerLockTimeout = jdbc.queryForObject(SWAP_LOCK_TIMEOUT, (rs, rowNum) -> rs.getString(1), lockTimeout.toMillis() + "ms");
+            Object[] args = concat(new Object[] {lockTimeout.toMillis() + "ms"}, keyArgs(key),
+                    new Object[] {fingerprint, fenceToken, toPgInterval(lockTtl)});
             for (int attempt = 0; attempt < MAX_RESERVE_ATTEMPTS; attempt++) {
-                Object[] args = concat(keyArgs(key), new Object[] {fingerprint, fenceToken, toPgInterval(lockTtl)});
-                boolean won = !jdbc.query(UPSERT_RESERVATION, (rs, rowNum) -> rs.getString(1), args).isEmpty();
+                // One round trip; the caller's lock_timeout is already back in
+                // effect when this returns (see RESERVE).
+                boolean won = jdbc.queryForObject(RESERVE, (rs, rowNum) -> rs.getLong("won"), args) > 0;
                 if (won) {
-                    // The handler runs in this same transaction from here on -
-                    // hand it back the lock_timeout it would have had.
-                    jdbc.queryForObject(SET_LOCK_TIMEOUT, String.class, callerLockTimeout);
                     bindScope(status, key, fenceToken);
                     return ReservationResult.reserved(fenceToken);
                 }
@@ -215,10 +222,6 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
                 // scope) it's our own not-yet-superseded reservation.
                 Optional<IdempotencyRecord> existing = findRecord(key);
                 if (existing.isPresent()) {
-                    if (!status.isNewTransaction()) {
-                        // Joined a transaction the caller keeps using after this returns.
-                        jdbc.queryForObject(SET_LOCK_TIMEOUT, String.class, callerLockTimeout);
-                    }
                     transactionManager.commit(status);
                     return ReservationResult.exists(existing.get());
                 }
@@ -269,6 +272,12 @@ public class PostgresIdempotencyStore implements IdempotencyStore {
     @Override
     public boolean supportsAsyncHandlers() {
         return false;
+    }
+
+    /** {@code true}: {@link #complete} commits the transaction the handler's writes ran in. */
+    @Override
+    public boolean commitsEffect() {
+        return true;
     }
 
     @Override

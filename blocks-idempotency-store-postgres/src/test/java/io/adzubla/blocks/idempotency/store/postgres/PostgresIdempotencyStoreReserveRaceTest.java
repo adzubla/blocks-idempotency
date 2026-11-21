@@ -46,11 +46,11 @@ class PostgresIdempotencyStoreReserveRaceTest {
         PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
         TransactionStatus status = mock(TransactionStatus.class);
         when(transactionManager.getTransaction(any())).thenReturn(status);
-        // Upsert: lost the conflict first, wins on the retry.
-        when(jdbc.query(contains("INSERT INTO"), any(RowMapper.class), any(Object[].class)))
-                .thenReturn(List.of(), List.of("POST"));
+        // Reservation statement: lost the conflict first (won = 0), wins on the retry.
+        when(jdbc.queryForObject(contains("INSERT INTO"), any(RowMapper.class), any(Object[].class)))
+                .thenReturn(0L, 1L);
         // Select in between: the row is already expired to read (vanished).
-        when(jdbc.query(contains("SELECT"), any(RowMapper.class), any(Object[].class)))
+        when(jdbc.query(contains("SELECT fingerprint"), any(RowMapper.class), any(Object[].class)))
                 .thenReturn(List.of());
 
         PostgresIdempotencyStore store =
@@ -71,10 +71,10 @@ class PostgresIdempotencyStoreReserveRaceTest {
         PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
         TransactionStatus status = mock(TransactionStatus.class);
         when(transactionManager.getTransaction(any())).thenReturn(status);
-        // Every upsert loses; every select finds the row already gone.
-        when(jdbc.query(contains("INSERT INTO"), any(RowMapper.class), any(Object[].class)))
-                .thenReturn(List.of());
-        when(jdbc.query(contains("SELECT"), any(RowMapper.class), any(Object[].class)))
+        // Every reservation statement loses; every select finds the row already gone.
+        when(jdbc.queryForObject(contains("INSERT INTO"), any(RowMapper.class), any(Object[].class)))
+                .thenReturn(0L);
+        when(jdbc.query(contains("SELECT fingerprint"), any(RowMapper.class), any(Object[].class)))
                 .thenReturn(List.of());
 
         PostgresIdempotencyStore store =

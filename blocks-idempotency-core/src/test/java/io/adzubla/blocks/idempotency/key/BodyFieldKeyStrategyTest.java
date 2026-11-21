@@ -1,5 +1,7 @@
 package io.adzubla.blocks.idempotency.key;
 
+import io.adzubla.blocks.idempotency.fingerprint.Fingerprint;
+import io.adzubla.blocks.idempotency.model.Body;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -67,5 +69,31 @@ class BodyFieldKeyStrategyTest {
         byte[] body = "{\"items\":[1,2,3]}".getBytes(StandardCharsets.UTF_8);
 
         assertThat(BodyFieldKeyStrategy.resolve(body, "$.items")).isEmpty();
+    }
+
+    @Test
+    void aFloatingPointKeyKeepsTheFormItHadWhenReadFromText() {
+        // Read from the raw text, a float key has always been coerced through a double.
+        assertThat(BodyFieldKeyStrategy.resolve(bytes("{\"orderId\":1.50}"), "$.orderId")).contains("1.5");
+        assertThat(BodyFieldKeyStrategy.resolve(bytes("{\"orderId\":1e3}"), "$.orderId")).contains("1000.0");
+    }
+
+    @Test
+    void aBodyThatIsNotStrictJsonIsStillReadLeniently() {
+        assertThat(BodyFieldKeyStrategy.resolve(bytes("{'orderId':'order-9'}"), "$.orderId")).contains("order-9");
+    }
+
+    @Test
+    void reusesTheParsedTreeSoTheSameBodyCanBeFingerprintedWithoutReparsing() {
+        Body body = Body.of(bytes("{\"orderId\":\"order-1\",\"amount\":10}"));
+
+        assertThat(BodyFieldKeyStrategy.resolve(body, "$.orderId")).contains("order-1");
+        assertThat(body.json()).isPresent();
+        assertThat(Fingerprint.sha256("/orders", "POST", body))
+                .isEqualTo(Fingerprint.sha256("/orders", "POST", bytes("{\"amount\":10,\"orderId\":\"order-1\"}")));
+    }
+
+    private static byte[] bytes(String json) {
+        return json.getBytes(StandardCharsets.UTF_8);
     }
 }

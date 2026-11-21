@@ -68,7 +68,14 @@ flowchart LR
     - [10.1. Configuring metrics](#101-configuring-metrics)
     - [10.2. The `idempotency.outcomes` counter](#102-the-idempotencyoutcomes-counter)
     - [10.3. Logs](#103-logs)
-- [11. Troubleshooting](#11-troubleshooting)
+- [11. Performance and sizing](#11-performance-and-sizing)
+    - [11.1. Cost per protected call](#111-cost-per-protected-call)
+    - [11.2. Store round trips](#112-store-round-trips)
+    - [11.3. Memory in the application](#113-memory-in-the-application)
+    - [11.4. Store size](#114-store-size)
+    - [11.5. Long transactions on Postgres](#115-long-transactions-on-postgres)
+    - [11.6. `WAIT` duplicates](#116-wait-duplicates)
+- [12. Troubleshooting](#12-troubleshooting)
 
 ## 2. Why use this
 
@@ -539,9 +546,17 @@ settings specific to HTTP (`idempotency.scope.*`, `idempotency.replay.*`,
   supported with the Redis and in-memory stores: the key is reserved once,
   and the record is completed or released with the asynchronous result.
   They are not supported with the Postgres store, and startup fails if one is
-  configured (see [6.4 Postgres](#64-postgres)). A streaming handler (`StreamingResponseBody`,
-  `SseEmitter`) on an `@Idempotent` endpoint is buffered in full before
-  anything reaches the client, since the whole body is needed for replay.
+  configured (see [6.4 Postgres](#64-postgres)).
+- **Responses are buffered up to `idempotency.max-body-size`** (1MB by
+  default), since a replay needs the whole body. A response that outgrows it
+  can't be cached anyway, so it is sent on to the client as it is written
+  instead of being held in memory, and a duplicate gets `409
+  response_unavailable`. The exception is the Postgres store: there the whole
+  response stays buffered until the transaction commits, so a failed commit
+  can still be reported as `500` instead of the handler's `2xx` ([6.4](#64-postgres)).
+  A streaming handler (`StreamingResponseBody`, `SseEmitter`) on an
+  `@Idempotent` endpoint reaches the client only once it finishes or has
+  produced more than `max-body-size`.
 
 **Status codes at a glance.** Every non-2xx response carries
 `Idempotency-Reject-Reason` — a closed vocabulary uniform across all
@@ -817,7 +832,8 @@ corrupting the caller that reclaimed it.
 `InMemoryIdempotencyStore` (in `core`) is the reusable test double used by
 the library's own test suite. It is **not** auto-configured and **not
 meant for production** — its state is a local in-process map, lost on
-restart and not shared across instances. Register it yourself only for tests
+restart and not shared across instances. Expired records are evicted every
+1024 reservations, so its size follows the records still inside their TTL. Register it yourself only for tests
 or a single-instance prototype. Register it as a bean named after its qualifier
 (or with that `@Qualifier`) so `store = InMemoryIdempotencyStore.QUALIFIER` finds it:
 
@@ -865,7 +881,8 @@ Qualifier `"postgres"` (`PostgresIdempotencyStore.QUALIFIER`). Exactly-once *for
 database*: reserving opens the transaction the handler's effect runs in (it
 joins transparently via ordinary `@Transactional` or plain JDBC on the same
 thread); completing commits the response and the effect together; releasing
-rolls back both. Concurrency is native — a second reservation blocks on the
+rolls back both, so the whole HTTP response stays buffered until the commit,
+whatever its size. Concurrency is native — a second reservation blocks on the
 row's conflict until the first commits or rolls back, bounded by a
 configurable lock timeout, rather than polling. That timeout applies only to
 the reservation itself: once the key is reserved, the handler's own
@@ -1027,6 +1044,7 @@ so it still works; values that fit are stored verbatim.
 | Tests, or a single-instance prototype | **In-memory**: not for production. |
 
 Both stores can be registered side by side and chosen per endpoint ([6.1](#61-overview)).
+For what each store costs per call and how to size it, see [11](#11-performance-and-sizing).
 
 ## 7. Limitations
 
@@ -1040,7 +1058,7 @@ assume:
 | **Side effect outside your database, needing a hard guarantee** (payment gateway, email) | Redis is best-effort. A Redis eviction, a handler that outlasts `lock-ttl`, or (with the default fail-open posture) a Redis outage lets a retry run the effect again. | Pass your own idempotency key to the downstream system as well. No store can make an external call exactly-once. |
 | **Exactly-once on Postgres, but the effect writes elsewhere** | The guarantee only covers writes made in the same database and transaction as the idempotency record. For an effect elsewhere, Postgres is no stronger than Redis. | Pick the store on other grounds (Redis doesn't hold a database connection for the whole handler) and pass your own key downstream. |
 | **Fail-open posture** (`onStoreFailure=OPEN`, the default) | While the store is down, requests run unprotected, so duplicates are not prevented. | Set `CLOSED` on endpoints where a duplicate is worse than a `503`. |
-| **Large or streaming HTTP responses** | A response over `idempotency.max-body-size` (1MB) is not cached, so a duplicate gets `409 response_unavailable` instead of a replay. A streaming response is buffered in full before it is sent. | Raise the limit, or don't mark such endpoints `@Idempotent`. |
+| **Large or streaming HTTP responses** | A response over `idempotency.max-body-size` (1MB) is not cached, so a duplicate gets `409 response_unavailable` instead of a replay. Up to that size the response is buffered before it is sent; on the Postgres store it is buffered in full. | Raise the limit, or don't mark such endpoints `@Idempotent`. |
 | **Request bodies over `idempotency.max-request-body-size`** (1MB) | Rejected with `413 request_too_large`, whichever key strategy you use. | Raise the limit, or send a smaller body. |
 | **Messaging: you want the original result replayed** | Messaging is dedupe-only. A duplicate is acked and skipped; nothing is cached or replayed. | Make the listener's effect observable elsewhere (a row, an event). |
 | **Messaging: `whenInProgress = WAIT`** | Rejected at startup. Only `REJECT` is supported. | Give in-progress deliveries a retry/backoff budget (see [5.5](#55-shared-messaging-behavior)). |
@@ -1171,7 +1189,7 @@ annotation always wins.
 | `idempotency.wait-timeout` | `5s` | HTTP | How long a `WAIT` duplicate blocks for the first request's result before getting `409 timeout`. |
 | `idempotency.poll-interval` | `100ms` | HTTP | Delay between `WAIT` polls, for stores without a native blocking wait. Postgres ignores it. |
 | `idempotency.poll-jitter` | `50ms` | HTTP | Random extra delay added to each poll, up to this much. Postgres ignores it. |
-| `idempotency.max-body-size` | `1MB` | HTTP | A response over this size is not cached, so a duplicate gets `409 response_unavailable`. |
+| `idempotency.max-body-size` | `1MB` | HTTP | A response over this size is not cached, so a duplicate gets `409 response_unavailable`. It is also the most of a response that is held in memory: a larger one is streamed to the client (except on the Postgres store, which buffers the whole response until it commits). |
 | `idempotency.max-request-body-size` | `1MB` | HTTP | A request body over this size is rejected with `413 request_too_large` while buffering. |
 | `idempotency.key.max-length` | `255` | all | Longest accepted raw key. A longer key, or one outside the fixed charset `[A-Za-z0-9_.:-]`, is rejected (`400 key_invalid` / dead-lettered). |
 | `idempotency.scope.principal-enabled` | `true` | HTTP | Include the authenticated principal in the effective key. |
@@ -1289,7 +1307,7 @@ In the table, `...` stands for `io.adzubla.blocks.idempotency`.
 
 | Level | Logger (package) | What you see |
 |-------|------------------|--------------|
-| `INFO` | `...validation`, `...messaging.core.validation` | At startup, one line per `@Idempotent` endpoint or listener with its key strategy and store, then `Idempotency configuration valid: N @Idempotent endpoint(s) validated`. If this line is missing, nothing was registered ([11](#11-troubleshooting)). |
+| `INFO` | `...validation`, `...messaging.core.validation` | At startup, one line per `@Idempotent` endpoint or listener with its key strategy and store, then `Idempotency configuration valid: N @Idempotent endpoint(s) validated`. If this line is missing, nothing was registered ([12](#12-troubleshooting)). |
 | `WARN` | `...engine` | The store is unavailable and the request was failed open or closed. A store failure while completing or releasing a key (the response isn't cached, or the key stays reserved until `lock-ttl`). |
 | `WARN` | `...web` | `IdempotencyFilter is not in the filter chain`: responses can't be captured, so duplicates get `409 response_unavailable`. |
 | `WARN` | `...messaging.kafka`, `...messaging.rabbitmq`, `...messaging.jms` | The store is unavailable with `onStoreFailure=CLOSED`: the listener was not invoked and the message was left for redelivery. |
@@ -1312,7 +1330,94 @@ The `DEBUG` lines include the raw key value, which can be a business identifier
 such as an order id. Leave `DEBUG` off in production unless you are tracing a
 specific problem, or confirm that your keys aren't sensitive.
 
-## 11. Troubleshooting
+## 11. Performance and sizing
+
+What a protected call costs, and how to size the application and the store for it.
+
+### 11.1. Cost per protected call
+
+Before the store is called, the library resolves the key and fingerprints the
+request. The fingerprint parses a JSON body and writes it back out with sorted
+keys, so it costs roughly 10 µs for a 1KB body, 0.5 ms for 100KB and 5 ms for
+1MB, and creates about 14 times the body size in short-lived garbage (measured
+on one development machine; read these as orders of magnitude). A body-field
+key reads the same parsed body, so it adds little on top. Every protected call
+pays this, duplicates and replays included. Keep
+`idempotency.max-request-body-size` close to the bodies you really expect. A
+non-JSON body is hashed as it is, at a fraction of the cost.
+
+### 11.2. Store round trips
+
+| Store | First call | Duplicate | Held while the handler runs |
+|---|---|---|---|
+| Redis | 2 (reserve, complete) | 1 (reserve returns the existing record) | nothing |
+| Postgres | 3 (reserve, write the response, commit) | 3 (reserve, read the record, commit), after waiting on the row lock, for up to `idempotency.postgres.lock-timeout`, if the first call is still in flight | a pooled connection and an open transaction |
+| In-memory | 0 | 0 | nothing |
+
+A non-2xx or a thrown exception replaces "complete" with "release": one round
+trip for Redis, a rollback for Postgres.
+
+### 11.3. Memory in the application
+
+A protected request holds its body (up to `max-request-body-size`) and its
+response (up to `max-body-size`) in memory, plus the copies made while caching
+it and, briefly, the parsed JSON body ([11.1](#111-cost-per-protected-call)).
+A response larger than `max-body-size` is streamed to the client instead,
+except on the Postgres store, which keeps the whole response until it commits
+([5.1](#51-web)). Don't put `@Idempotent` on large downloads behind the
+Postgres store.
+
+### 11.4. Store size
+
+Each completed record is kept for the endpoint's `ttl` (24h by default), so
+the store holds about *rate of new keys × `ttl`* records (duplicates add
+none), each the size of its cached response plus a few hundred bytes of key,
+fingerprint and headers. For example, 100 requests/s with 2KB responses and
+the default `ttl` is about 8.6 million records:
+
+- **Redis** stores the body Base64-encoded (a third larger), so that's roughly
+  25GB. Budget `maxmemory` for it. Every record has a TTL, so any eviction
+  policy other than `noeviction` (including the `volatile-*` ones) can evict
+  live records, and a retry of an evicted key runs the handler again. With
+  `noeviction`, a full Redis rejects new reservations instead, and the
+  endpoint's `onStoreFailure` posture applies; a request already running when
+  Redis fills up can't save its response, so a retry of it runs the handler
+  again. A shorter `ttl` on high-volume endpoints is the main lever, and a
+  lower `idempotency.max-body-size` caps the size of each record.
+- **Postgres** compresses large bodies, but the table and its primary-key
+  index (the full route, handler, principal and key, not a digest) still grow
+  with the same formula. Each new key writes its row twice (the reservation,
+  then the response), leaving one dead row version behind, and the cleanup
+  sweep's deletes leave one more per expired row. Autovacuum reclaims them, so
+  check that it keeps up on this table at your write rate.
+
+### 11.5. Long transactions on Postgres
+
+The reservation is the handler's own open transaction, so a slow handler is a
+long transaction. Besides holding a pooled connection ([6.4](#64-postgres)):
+
+- A handler that spends time outside the database, such as calling another
+  service, leaves its connection *idle in transaction*. If the database or
+  role sets `idle_in_transaction_session_timeout`, Postgres closes such a
+  session, and the request fails when it completes (a `500` over HTTP; a
+  failed delivery for a listener). Keep that timeout above your slowest
+  handler, or keep slow external calls off Postgres-protected endpoints.
+- An open transaction holds back vacuum for the whole database while it runs,
+  so many slow handlers can make tables bloat. Keep Postgres-protected handlers
+  short.
+
+### 11.6. `WAIT` duplicates
+
+`WAIT` is HTTP only (message listeners reject it at startup). A `WAIT` duplicate
+holds its request thread for up to `idempotency.wait-timeout` (5s). On Redis it
+polls the store about every `poll-interval` plus jitter (100–150ms by default),
+so a burst of waiting duplicates is a burst of reads. On Postgres it blocks on
+the row lock and holds a connection instead. Under heavy retry traffic, prefer
+`REJECT`: on Redis it costs one store call and frees the thread at once; on
+Postgres it still waits on the row lock for up to
+`idempotency.postgres.lock-timeout`, so keep that short ([6.4](#64-postgres)).
+
+## 12. Troubleshooting
 
 | Symptom | Likely cause |
 |---------|--------------|

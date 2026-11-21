@@ -16,7 +16,9 @@ import java.util.TreeSet;
  * Captures a handler's response for caching: status, headers (denylist
  * filtered, {@code Set-Cookie} always removed), and body. A body over {@code
  * maxBodySize} is dropped (not cached) rather than captured - the record is
- * still completed, just not replayable ({@code response_unavailable}).
+ * still completed, just not replayable ({@code response_unavailable}). So is
+ * a body that a {@link BoundedContentCachingResponseWrapper} already sent
+ * through because it outgrew the buffer.
  */
 public final class ResponseCapture {
 
@@ -36,6 +38,9 @@ public final class ResponseCapture {
             headers.put(name, new ArrayList<>(response.getHeaders(name)));
         }
 
+        if (response instanceof BoundedContentCachingResponseWrapper bounded && bounded.isOverflowed()) {
+            return new CachedResponse(response.getStatus(), headers, null);
+        }
         byte[] content = response.getContentAsByteArray();
         byte[] body = content.length <= maxBodySize.toBytes() ? content : null;
         return new CachedResponse(response.getStatus(), headers, body);

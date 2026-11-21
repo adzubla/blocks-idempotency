@@ -1,5 +1,6 @@
 package io.adzubla.blocks.idempotency.fingerprint;
 
+import io.adzubla.blocks.idempotency.model.Body;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.SerializationFeature;
@@ -9,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.Optional;
 
 /**
  * SHA-256 of route + handler + the normalized (canonical key-ordered) request
@@ -41,6 +43,19 @@ public final class Fingerprint {
      * @return the SHA-256 as lowercase hex
      */
     public static String sha256(String route, String handler, byte[] body) {
+        return sha256(route, handler, Body.of(body));
+    }
+
+    /**
+     * Fingerprint of a request or delivery whose body may already have been
+     * parsed (for a body-field key): the parsed tree is reused, not re-parsed.
+     *
+     * @param route   the request path (plus canonical query) or message destination
+     * @param handler the handler identity
+     * @param body    the body
+     * @return the SHA-256 as lowercase hex
+     */
+    public static String sha256(String route, String handler, Body body) {
         byte[] digest = digestBytes(
                 route.getBytes(StandardCharsets.UTF_8),
                 handler.getBytes(StandardCharsets.UTF_8),
@@ -71,15 +86,15 @@ public final class Fingerprint {
         }
     }
 
-    private static byte[] normalize(byte[] body) {
-        if (body == null || body.length == 0) {
-            return body == null ? new byte[0] : body;
+    private static byte[] normalize(Body body) {
+        Optional<Object> tree = body.json();
+        if (tree.isEmpty()) {
+            return body.bytes();
         }
         try {
-            Object tree = CANONICAL_MAPPER.readValue(body, Object.class);
-            return CANONICAL_MAPPER.writeValueAsBytes(tree);
-        } catch (JacksonException notJson) {
-            return body;
+            return CANONICAL_MAPPER.writeValueAsBytes(tree.get());
+        } catch (JacksonException unwritable) {
+            return body.bytes();
         }
     }
 }

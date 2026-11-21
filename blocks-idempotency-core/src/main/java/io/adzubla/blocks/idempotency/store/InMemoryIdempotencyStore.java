@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -30,6 +31,10 @@ import java.util.concurrent.atomic.AtomicReference;
  *       primary's record;</li>
  *   <li>no native wait support: inherits {@link IdempotencyStore}'s default
  *       {@code await()}, which polls {@link #find};</li>
+ *   <li>expired records are evicted: every {@value #SWEEP_EVERY_RESERVATIONS}th
+ *       {@code reserve} removes all expired entries, so the map holds only
+ *       records still inside their TTL (plus at most that many reservations'
+ *       worth of expired ones) instead of growing without bound;</li>
  *   <li>{@link #setUnavailable} simulates an outage (every operation throws
  *       {@link StoreUnavailableException}) for exercising the {@code
  *       onStoreFailure} posture.</li>
@@ -39,9 +44,13 @@ public class InMemoryIdempotencyStore implements IdempotencyStore {
 
     public static final String QUALIFIER = "in-memory";
 
+    /** How many reservations pass between two sweeps of expired entries. */
+    static final int SWEEP_EVERY_RESERVATIONS = 1024;
+
     private final Map<EffectiveKey, TimestampedRecord> records = new ConcurrentHashMap<>();
     private final Clock clock;
     private volatile boolean unavailable = false;
+    private final AtomicInteger reservationsSinceSweep = new AtomicInteger();
 
     public InMemoryIdempotencyStore() {
         this(Clock.systemUTC());
@@ -60,6 +69,10 @@ public class InMemoryIdempotencyStore implements IdempotencyStore {
     public ReservationResult reserve(EffectiveKey key, String fingerprint, Duration lockTtl) {
         requireAvailable();
         Instant now = clock.instant();
+        if (reservationsSinceSweep.incrementAndGet() >= SWEEP_EVERY_RESERVATIONS) {
+            reservationsSinceSweep.set(0);
+            evictExpired(now);
+        }
         AtomicReference<ReservationResult> outcome = new AtomicReference<>();
         records.compute(key, (k, existing) -> {
             if (existing == null || existing.isExpired(now)) {
@@ -95,6 +108,21 @@ public class InMemoryIdempotencyStore implements IdempotencyStore {
     public void release(EffectiveKey key, String fenceToken) {
         requireAvailable();
         records.computeIfPresent(key, (k, entry) -> entry.fenceToken().equals(fenceToken) ? null : entry);
+    }
+
+    /**
+     * Removes every entry expired at {@code now}. Safe against a concurrent
+     * {@code reserve} of the same key: {@code ConcurrentHashMap}'s entry-set
+     * {@code removeIf} removes an entry only if it still maps to the value that
+     * was tested, so a record that was just replaced is left alone.
+     */
+    private void evictExpired(Instant now) {
+        records.entrySet().removeIf(entry -> entry.getValue().isExpired(now));
+    }
+
+    /** Number of entries held, expired or not. For tests. */
+    int size() {
+        return records.size();
     }
 
     private void requireAvailable() {

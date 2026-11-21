@@ -9,6 +9,7 @@ import io.adzubla.blocks.idempotency.fingerprint.Fingerprint;
 import io.adzubla.blocks.idempotency.key.BodyFieldKeyStrategy;
 import io.adzubla.blocks.idempotency.key.KeyFormat;
 import io.adzubla.blocks.idempotency.key.PrincipalClaimResolver;
+import io.adzubla.blocks.idempotency.model.Body;
 import io.adzubla.blocks.idempotency.model.CachedResponse;
 import io.adzubla.blocks.idempotency.model.EffectiveKey;
 import io.adzubla.blocks.idempotency.policy.IdempotencyPolicy;
@@ -110,7 +111,7 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
         // Exactly one of header()/fieldPath() is set - validated at startup. A header
         // key is resolved (and below, validated) before the body is touched, so a request that's
         // rejected or passed through for its key alone never has its body buffered.
-        byte[] body = annotation.header().isEmpty() ? requestBody(request) : null;
+        Body body = annotation.header().isEmpty() ? Body.of(requestBody(request)) : null;
         Optional<String> rawKey = annotation.header().isEmpty()
                 ? BodyFieldKeyStrategy.resolve(body, annotation.fieldPath())
                 : HeaderKeyStrategy.resolve(request, annotation.header());
@@ -129,7 +130,7 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
         }
 
         if (body == null) {
-            body = requestBody(request);
+            body = Body.of(requestBody(request));
         }
 
         EffectiveKey key = HttpEffectiveKeyFactory.create(request, rawKey.get(), properties.getScope().isPrincipalEnabled(),
@@ -175,7 +176,10 @@ public class IdempotencyInterceptor implements HandlerInterceptor {
         if (decision instanceof EngineDecision.Proceed proceed) {
             CapturingHttpServletResponse capturing = WebUtils.getNativeResponse(response, CapturingHttpServletResponse.class);
             if (capturing != null) {
-                capturing.startCapture();
+                // Buffer only what could be cached; a larger body streams through. A store that
+                // commits the effect in complete() keeps the whole body, so a rolled-back effect
+                // can still replace it with a 500.
+                capturing.startCapture(engine.commitsEffect() ? Long.MAX_VALUE : properties.getMaxBodySize().toBytes());
             }
             request.setAttribute(ATTR_EFFECTIVE_KEY, key);
             request.setAttribute(ATTR_POLICY, policy);

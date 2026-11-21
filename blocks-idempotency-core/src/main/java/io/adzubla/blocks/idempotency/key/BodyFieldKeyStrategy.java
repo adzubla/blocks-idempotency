@@ -1,8 +1,10 @@
 package io.adzubla.blocks.idempotency.key;
 
 import com.jayway.jsonpath.JsonPath;
+import io.adzubla.blocks.idempotency.model.Body;
 import com.jayway.jsonpath.JsonPathException;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 
@@ -29,9 +31,43 @@ public final class BodyFieldKeyStrategy {
      * @return the key as a string, or empty if it cannot be resolved
      */
     public static Optional<String> resolve(byte[] body, String fieldPath) {
-        if (body == null || body.length == 0) {
+        return resolve(Body.of(body), fieldPath);
+    }
+
+    /**
+     * Same as {@link #resolve(byte[], String)}, reading the body's parsed tree
+     * when it has one, so the same {@link Body} can then be fingerprinted
+     * without parsing it again.
+     *
+     * <p>The key is identical to what reading the raw text gives: a body that
+     * isn't strict JSON (the JSONPath parser is more lenient) and a
+     * floating-point match (whose string form depends on the original digits)
+     * are read from the raw text instead.
+     *
+     * @param body      the body
+     * @param fieldPath a JSONPath expression, e.g. {@code $.orderId}
+     * @return the key as a string, or empty if it cannot be resolved
+     */
+    public static Optional<String> resolve(Body body, String fieldPath) {
+        if (body.bytes().length == 0) {
             return Optional.empty();
         }
+        Optional<Object> tree = body.json();
+        if (tree.isPresent()) {
+            Object value;
+            try {
+                value = JsonPath.parse(tree.get()).read(fieldPath);
+            } catch (JsonPathException e) {
+                return Optional.empty();
+            }
+            if (!(value instanceof BigDecimal)) {
+                return toScalarString(value);
+            }
+        }
+        return resolveFromText(body.bytes(), fieldPath);
+    }
+
+    private static Optional<String> resolveFromText(byte[] body, String fieldPath) {
         Object value;
         try {
             value = JsonPath.read(new String(body, StandardCharsets.UTF_8), fieldPath);

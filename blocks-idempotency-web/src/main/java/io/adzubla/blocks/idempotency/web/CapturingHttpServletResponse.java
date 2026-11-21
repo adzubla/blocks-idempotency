@@ -1,5 +1,6 @@
 package io.adzubla.blocks.idempotency.web;
 
+import io.adzubla.blocks.idempotency.response.BoundedContentCachingResponseWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpServletResponseWrapper;
 import org.springframework.web.util.ContentCachingResponseWrapper;
@@ -8,9 +9,10 @@ import java.io.IOException;
 
 /**
  * A response wrapper that writes straight through until {@link
- * #startCapture()} is called, and from then on buffers the body in a {@link
- * ContentCachingResponseWrapper} so it can be captured for caching before
- * {@link #copyBodyToResponse()} sends it to the client.
+ * #startCapture(long)} is called, and from then on buffers the body (up to the
+ * given limit) in a {@link BoundedContentCachingResponseWrapper} so it can be
+ * captured for caching before {@link #copyBodyToResponse()} sends it to the
+ * client.
  *
  * <p>{@link IdempotencyFilter} wraps every response before the handler is
  * known; only a request {@link IdempotencyInterceptor} actually reserves a
@@ -26,10 +28,19 @@ public class CapturingHttpServletResponse extends HttpServletResponseWrapper {
         super(response);
     }
 
-    /** Starts buffering. Must be called before the handler obtains the output stream or writer. */
+    /** Starts buffering the whole body. Must be called before the handler obtains the output stream or writer. */
     public void startCapture() {
+        startCapture(Long.MAX_VALUE);
+    }
+
+    /**
+     * Starts buffering at most {@code limit} bytes; a larger body is sent through as it is
+     * written, and not cached (see {@link BoundedContentCachingResponseWrapper}). Must be
+     * called before the handler obtains the output stream or writer.
+     */
+    public void startCapture(long limit) {
         if (capture == null) {
-            capture = new ContentCachingResponseWrapper((HttpServletResponse) getResponse());
+            capture = new BoundedContentCachingResponseWrapper((HttpServletResponse) getResponse(), limit);
             setResponse(capture);
         }
     }

@@ -42,6 +42,21 @@ public interface IdempotencyStore {
     }
 
     /**
+     * Whether {@link #complete} commits the effect itself, so it can still fail with
+     * {@link EffectRolledBackException} after the handler has returned. When it can, the
+     * HTTP response must stay buffered until {@code complete} returns, whatever its size,
+     * so that a rolled-back effect can be reported as a {@code 500} rather than the 2xx
+     * the handler produced. Otherwise a response too large to cache is streamed to the
+     * client instead of being held in memory. {@code false} by default; {@code true} for
+     * Postgres.
+     *
+     * @return whether {@code complete} commits the effect
+     */
+    default boolean commitsEffect() {
+        return false;
+    }
+
+    /**
      * Look up the current record, if any.
      *
      * @param key the effective key
