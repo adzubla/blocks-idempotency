@@ -84,10 +84,13 @@ call) are listed in [7. Limitations](#7-limitations). Read that before adopting 
 ### 3.1. Modules
 
 Group id `io.adzubla.blocks`. Add `core`, plus whichever transport module(s)
-your application uses, plus at least one store module — each is optional, so
-you don't pull in Kafka, RabbitMQ, JMS, Redis, or JDBC dependencies you don't
-need. A single application can mix transports (HTTP endpoints and message
-listeners side by side) and stores.
+your application uses, plus at least one store module. The transports and stores
+are separate modules so you don't pull in Kafka, RabbitMQ, JMS, Redis, or JDBC
+dependencies you don't need. A single application can mix transports (HTTP
+endpoints and message listeners side by side) and stores.
+
+The project is at `0.1.0-SNAPSHOT` and not yet published to a public repository:
+build it with `mvn install` and depend on that version from your local repository.
 
 | Artifact                                | Purpose                                                                         |
 |-----------------------------------------|---------------------------------------------------------------------------------|
@@ -117,11 +120,12 @@ listeners side by side) and stores.
 </dependency>
 ```
 
-Each store module auto-configures its `IdempotencyStore` bean as soon as its
-Spring Boot starter is on the classpath and configured (`spring-boot-starter-data-redis`
-for Redis, `spring-boot-starter-jdbc` + a `DataSource` for Postgres). The store
-modules bring those starters with them, as the messaging modules bring their
-broker client. `blocks-idempotency-web` does not bring the web starter or a servlet
+Each store module brings its client with it (`spring-boot-starter-data-redis`,
+`spring-boot-starter-jdbc` and the PostgreSQL driver), as the messaging modules
+bring their broker client. It auto-configures its `IdempotencyStore` bean once
+that client is configured: a `StringRedisTemplate` for Redis (the usual
+`spring.data.redis.*` properties), a `JdbcTemplate` and transaction manager for
+Postgres (a `DataSource`). `blocks-idempotency-web` does not bring the web starter or a servlet
 container: it uses the Spring MVC and servlet API of your application, so your
 app needs `spring-boot-starter-web` (or `-webmvc`).
 
@@ -133,7 +137,7 @@ module.
 ### 3.2. Quick start
 
 A minimal HTTP setup with Redis. Add `core`, `web` and `store-redis` as shown
-above, on top of `spring-boot-starter-web`, then:
+above, on top of `spring-boot-starter-web`, and have a Redis server running, then:
 
 ```properties
 spring.data.redis.host=localhost
@@ -200,13 +204,14 @@ only, not on a class):
 | `ttl`                  | How long a completed response is kept, such as `PT1H` or `1h`. After that the key behaves as a new one. `""` inherits `idempotency.default-ttl`.               |
 | `keyRequired`          | Default `true`: a request or delivery without a key is rejected. `false` lets it through unprotected, with nothing stored. It has no global default.            |
 | `onStoreFailure`       | What to do when the store is unreachable. `OPEN` runs the handler unprotected, `CLOSED` rejects (`503` for HTTP, redelivery for messaging). `DEFAULT` inherits the global setting. |
-| `whenInProgress`       | What to do with a duplicate that arrives while the first request is still running. `REJECT` fails it (`409` for HTTP, redelivery for messaging). `WAIT` blocks until the first request finishes (HTTP only). `DEFAULT` inherits the global setting. |
+| `whenInProgress`       | What to do with a duplicate that arrives while the first request is still running. `REJECT` fails it (`409` for HTTP, redelivery for messaging). `WAIT` blocks until the first request finishes (HTTP only; rejected at startup on a listener). `DEFAULT` inherits the global setting. |
 
 Every attribute with a global default can be set once under `idempotency.*`
 ([9. Configuration reference](#9-configuration-reference)) and overridden per
-handler. A misconfigured `@Idempotent` (both or neither of `header`/`fieldPath`,
-an invalid `ttl`, or a `store` with no matching bean) fails **application
-startup**, not the first request.
+handler. A misconfigured `@Idempotent` fails **application startup**, not the first
+request: both or neither of `header`/`fieldPath`, an invalid `ttl`, no store set
+or a `store` with no matching bean, `whenInProgress = WAIT` on a message
+listener, or an asynchronous handler on the Postgres store.
 
 ## 4. How it works
 
