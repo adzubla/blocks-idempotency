@@ -40,9 +40,10 @@ hard parts:
 - **Concurrent duplicates in flight** — two copies of the same request
   arriving before the first has finished need a decision (reject? wait?) that a
   naive uniqueness check doesn't make.
-- **Replaying the *original* response** — a client that retries a successful
+- **Replaying the *original* response (HTTP)** — a client that retries a successful
   request expects the same response back, not a fresh error from a broken
-  unique-constraint violation.
+  unique-constraint violation. (A message listener has no response to replay:
+  a duplicate delivery is acked and skipped.)
 - **Telling a genuine retry apart from an accidental key reuse** — the same
   key showing up with a *different* payload is a bug in the caller, not a
   retry, and should be rejected loudly rather than silently accepted or
@@ -50,11 +51,14 @@ hard parts:
 - **Behaving well when the backing store is unavailable** — an ad-hoc
   solution rarely has a considered answer for "what happens if the database
   is down right now," and defaults to either blocking everything or silently
-  losing protection.
+  losing protection. Here you choose per handler: fail open (run unprotected,
+  the default) or fail closed (`503`).
 
-Centralizing this logic means one audited implementation, consistent
+Centralizing this logic means one tested implementation, consistent
 behavior across every endpoint and listener in the codebase, and storage that
-can be swapped (or mixed) per handler without touching business logic.
+can be swapped (or mixed) per handler without touching business logic. The
+stores differ in their guarantees, though: see
+[6.5](#65-choosing-a-store).
 
 **Use it when:**
 - Clients may retry the same request (network timeouts, double-clicks) or a
