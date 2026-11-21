@@ -759,7 +759,15 @@ corrupting the caller that reclaimed it.
 the library's own test suite. It is **not** auto-configured and **not
 meant for production** — its state is a local in-process map, lost on
 restart and not shared across instances. Register it yourself only for tests
-or a single-instance prototype.
+or a single-instance prototype. Register it as a bean named after its qualifier
+(or with that `@Qualifier`) so `store = InMemoryIdempotencyStore.QUALIFIER` finds it:
+
+```java
+@Bean(InMemoryIdempotencyStore.QUALIFIER)
+IdempotencyStore inMemoryIdempotencyStore() {
+    return new InMemoryIdempotencyStore();
+}
+```
 
 ### 6.3 Redis
 
@@ -806,7 +814,8 @@ statements run with whatever `lock_timeout` the connection normally has.
 
 Requires `spring-boot-starter-jdbc`, a `DataSource`/`PlatformTransactionManager`,
 and the `idempotency_record` table, which **you create** (see below). A built-in
-scheduled job sweeps expired rows, since Postgres itself has no native TTL.
+job sweeps expired rows, since Postgres itself has no native TTL. It runs on its
+own single thread, so you don't need `@EnableScheduling`.
 
 **Creating the table.** The library does not run any migration itself. Add the
 table to your own migrations, under whatever version your migration tool needs.
