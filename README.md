@@ -397,7 +397,25 @@ A practical checklist:
 - Opaque and short enough to be cheap to store and log — a UUID/ULID or an existing business id, not a serialized object.
 - If you don't control the caller and can't guarantee either of the above, consider `keyRequired = false` for that endpoint/listener instead of guessing — see [4.1](#41-idempotency-key-vs-effective-key).
 
-### 4.3. Request/delivery flow
+### 4.3. Key format
+
+A raw key is an opaque string that must satisfy two rules:
+
+- **Characters:** only letters (`A-Z`, `a-z`), digits and `_ . : -`. The set is fixed
+  and not configurable, so no spaces, slashes, `@`, `=` or non-ASCII characters.
+- **Length:** 1 to `idempotency.key.max-length` characters (default `255`).
+
+A UUID, a ULID or an existing business id all fit. A missing or blank key is
+`400 key_required` (dead-lettered for messaging), and one that breaks the rules
+above is `400 key_invalid`, unless the handler has `keyRequired = false` (a
+missing key then passes through unprotected).
+
+With a body-field key, the JSONPath must resolve to a single string, number or
+boolean (a number or boolean is used as its text form). A blank string, `null`,
+an object, an array, a missing field or malformed JSON counts as no key. The
+resulting text must pass the same two rules.
+
+### 4.4. Request/delivery flow
 
 One decision flow is shared by every transport; only the adapter at the edges
 differs (an HTTP interceptor, or a broker-specific advice for
