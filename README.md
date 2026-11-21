@@ -920,10 +920,44 @@ idempotency.postgres.cleanup.interval=5m
 idempotency.postgres.cleanup.batch-size=1000
 ```
 
-The sweep deletes in short batches, each committed on its own, and skips
-any row another transaction holds (`FOR UPDATE SKIP LOCKED`). It never waits
-on a reservation in flight, and sweeps running on several instances don't
-block each other.
+**How the cleanup works.** Postgres has no native TTL, so a completed record
+(past its `ttl`) or an abandoned reservation (past `lock-ttl`) stays in the table
+until a sweep deletes it.
+
+- **Correctness doesn't depend on the sweep.** An expired row is already ignored
+  when a key is looked up, and a new reservation for the same key takes it over.
+  The sweep only reclaims space, so a late or failed sweep never makes an old
+  record dedupe a new request.
+- **Schedule.** The job runs on its own single daemon thread, so it needs no
+  `@EnableScheduling`. The first sweep runs one `interval` after startup. After
+  that, `interval` elapses between the end of one sweep and the start of the next.
+- **One sweep.** It deletes rows whose `expires_at` has passed, using the
+  database's clock, in batches of `batch-size`. Each batch is a short statement
+  committed on its own, which avoids one huge `DELETE` and the lock and WAL
+  spike that comes with it. The sweep repeats until a batch deletes fewer rows
+  than `batch-size`. The `expires_at` index keeps each batch cheap.
+- **It never waits.** A batch uses `FOR UPDATE SKIP LOCKED`, so it skips any row
+  another transaction holds: a reservation still open, or a row that a sweep on
+  another instance is already deleting. A skipped row is deleted by the sweep
+  that holds it, or by a later sweep.
+- **Several instances.** Each instance runs its own sweep. They don't block one
+  another, and the work simply splits between them.
+- **Failure and visibility.** A failed sweep is logged at `ERROR` and the
+  schedule continues with the next one. At `DEBUG`, each sweep logs how many rows
+  it deleted ([10.3](#103-logs)).
+
+To run the cleanup yourself (a cron job, `pg_cron`), set
+`idempotency.postgres.cleanup.enabled=false` and delete in batches, as the
+built-in job does:
+
+```sql
+DELETE FROM idempotency_record
+WHERE ctid IN (
+    SELECT ctid FROM idempotency_record
+    WHERE expires_at < clock_timestamp()
+    LIMIT 1000
+    FOR UPDATE SKIP LOCKED);
+```
 
 **Size the connection pool for blocked duplicates, not just requests.** With
 this store, every in-flight `@Idempotent` request holds a pooled connection
