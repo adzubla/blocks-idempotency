@@ -1070,7 +1070,7 @@ annotation always wins.
 
 | Property | Default | Applies to | Meaning |
 |----------|---------|------------|---------|
-| `idempotency.default-store` | none, **required** unless every `@Idempotent` sets `store` | all | Store qualifier (`redis`, `postgres`). Startup fails if it is empty and an `@Idempotent` doesn't set its own. |
+| `idempotency.default-store` | none, **required** unless every `@Idempotent` sets `store` | all | Store qualifier (`redis`, `postgres`, or `in-memory` if you registered that store). Startup fails if it is empty and an `@Idempotent` doesn't set its own. |
 | `idempotency.default-ttl` | `24h` | all | How long a completed response is kept. |
 | `idempotency.default-on-store-failure` | `OPEN` | all | `OPEN` or `CLOSED`. `DEFAULT` is not allowed here. |
 | `idempotency.default-when-in-progress` | `REJECT` | all | `REJECT` or `WAIT`. `DEFAULT` is not allowed here, and `WAIT` fails startup for messaging listeners. |
